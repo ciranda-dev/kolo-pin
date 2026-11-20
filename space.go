@@ -246,7 +246,7 @@ func (b *spaceBatch) measure() (delta int64, markers int, err error) {
 	return delta, markers, nil
 }
 
-// kolo-store v0.1.5's entry layout (its layout package and README Formats): entry i of a log is stored under
+// kolo-store's entry layout (its layout package and README Formats): entry i of a log is stored under
 // 0x01 ‖ log ID ‖ 'e' ‖ uint64be(i), with the value uvarint(3) ‖ bytes(record) ‖ bool(deleted) ‖ bytes(payload).
 const (
 	storeLogPrefix    = 0x01

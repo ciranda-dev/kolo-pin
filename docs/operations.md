@@ -13,10 +13,6 @@ kolo-pin id -data /var/lib/kolo-pin
 capabilities. The key is created in the data directory on first use
 (`identity.key`, mode 0600) and kept across restarts. The data directory
 must be private (mode 0700); it is created with that mode when missing.
-v0.1.1 does not read the logs of a v0.1.0 data directory: they fail to
-open, so an `Add` of one is answered busy and a pull not found. Start v0.1.1 with an
-empty data directory; it gets a new key, so owners issue new capabilities
-and call `Add` again.
 
 | Flag | Environment | Default | Meaning |
 |---|---|---|---|
