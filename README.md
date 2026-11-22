@@ -10,7 +10,7 @@ A peer that stores encrypted data for others without being able to read it.
 
 kolo-pin stores encrypted data for others under signed, expiring capabilities, verifies what it keeps as a [Certificate Transparency monitor (RFC 9162)](https://www.rfc-editor.org/info/rfc9162) would, and spreads data over pinning peers by [rendezvous hashing](https://doi.org/10.1109/90.663936). A pinning peer keeps other people's [kolo-log](https://github.com/ciranda-dev/kolo-log) logs available while their owners are offline: chat history, or what one of your devices wrote, for your other devices. It is a [kolo-sync](https://github.com/ciranda-dev/kolo-sync) replica without entry keys: it verifies and stores signed records, ciphertexts and delete markers, and serves them to any kolo-sync client, by pull or `Fetch`, but it never has the keys to read them.
 
-Owners allow it with a signed, expiring capability; there are no accounts. The library is pure Go and builds with `CGO_ENABLED=0`. The `kolo-pin` binary runs one on a small server.
+Owners allow it with a signed, expiring capability that only the owner's key can present; there are no accounts. The library is pure Go and builds with `CGO_ENABLED=0`. The `kolo-pin` binary runs one on a small server.
 
 ## Install
 

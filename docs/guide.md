@@ -128,8 +128,9 @@ Client; `id` is the kolo-id identity the connection is made with, and
 - `Add(ctx, id, peer, log, capability) (Info, error)` serves `log` (a
   kolo-store or kolo-log log or replica) to the pinning peer without entry
   keys and returns once it has pulled and verified it. Call it again to
-  send new entries and delete markers. Any `id` works: the capability
-  carries the authority.
+  send new entries and delete markers. `id` must be the capability's
+  owner: the pinning peer serves an add only on a connection whose key is the owner's. A device that owns a log
+  adds it itself; a sibling device cannot add for another key. A path based on device certificates may come later.
 - `Status(ctx, id, peer, logID) (Info, error)` and
   `Remove(ctx, id, peer, logID)`: `id` must be the log's owner.
   `Info` has `Entries`, `Used` (bytes of all the owner's logs on the peer),
@@ -194,7 +195,8 @@ The pinning peer's rules:
 
 Errors work with `errors.Is`; none carries bytes a peer sent.
 
-- `ErrUnauthorized`: the capability is for another peer or owner, does not
+- `ErrUnauthorized`: the requester is not the capability's owner (checked first, before
+  expiry or revocation), the capability is for another peer or owner, does not
   cover the log, has a bad signature or an issue time in the future, the
   owner is not accepted, or the log is not the owner's.
 - `ErrExpired`, `ErrRevoked`, `ErrQuotaExceeded`, `ErrDiskFull`.

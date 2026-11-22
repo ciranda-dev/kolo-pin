@@ -54,7 +54,7 @@ those before `revoked` were revoked by a note. There is no JSON form.
   monotonic replay protection. There are no delegation chains, identifiers
   of other schemes or policy language, and the encoding is kolo-codec.
 - The requests are add, status and remove, and a refresh is an add again.
-  An add is synchronous, with no queue and no request IDs. The capability is a bearer grant for add: any connection that presents it is served, but only by the pinning peer it names, for the logs it lists and until it expires, and the log must verify under the owner key.
+  An add is synchronous, with no queue and no request IDs. Add is served only to the owner's key, the one the kolo-secure handshake proved on the connection; the capability still names one pinning peer, its logs and an expiry, and the log must verify under the owner key. A requester that is not the owner is refused with `ErrUnauthorized` before the expiry or revocation is checked.
 - [RFC 4918, HTTP Extensions for WebDAV](https://www.rfc-editor.org/info/rfc4918) (Proposed Standard, June 2007) 507 and
   [RFC 9110, HTTP Semantics](https://www.rfc-editor.org/info/rfc9110) (Internet Standard, June 2022) 413.
   Takes: storage limits refused before the write, with distinct answers.
