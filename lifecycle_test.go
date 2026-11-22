@@ -209,7 +209,7 @@ func TestRevokeBeforeFirstUse(t *testing.T) {
 		t.Fatalf("%d owners in memory after a revoke note alone", n)
 	}
 	p.restart(t)
-	if _, err := Add(ctx, generate(t), p.Peer, l, old); !errors.Is(err, ErrRevoked) {
+	if _, err := Add(ctx, alice.id, p.Peer, l, old); !errors.Is(err, ErrRevoked) {
 		t.Fatalf("Add with a token revoked before first use = %v, want ErrRevoked", err)
 	}
 	if _, err := Add(ctx, alice.id, p.Peer, l, alice.issue(t, p.Peer, Capability{Issued: now})); err != nil {

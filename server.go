@@ -618,6 +618,8 @@ func (s *server) add(ctx context.Context, conn *kolosecure.Conn, logID kololog.L
 	}
 	now := s.now()
 	switch {
+	case !conn.RemotePublicKey().Equal(c.Owner):
+		return Info{}, fmt.Errorf("%w: requester is not the capability owner", ErrUnauthorized)
 	case !c.Peer.Equal(s.key):
 		return Info{}, fmt.Errorf("%w: capability for another pinning peer", ErrUnauthorized)
 	case !c.Covers(logID):
