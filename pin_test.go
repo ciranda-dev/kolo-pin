@@ -153,7 +153,7 @@ func TestKVReaderThroughPinningPeer(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := range 5 {
-		if err := db.Put(fmt.Appendf(nil, "k%d", i), fmt.Appendf(nil, "v%d", i)); err != nil {
+		if err := db.Put(ctx, fmt.Appendf(nil, "k%d", i), fmt.Appendf(nil, "v%d", i)); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -195,14 +195,12 @@ func TestReasonMapping(t *testing.T) {
 	}
 }
 
-// Past maxOpen, the least recently used replica is closed, not the most recent one.
+// Past MaxOpenBytes, the least recently used replica is closed, not the most recent one.
 func TestOpenReplicasLRU(t *testing.T) {
 	checkGoroutines(t)
 	ctx := testCtx(t)
-	maxOpen = 2
-	t.Cleanup(func() { maxOpen = 64 })
 	get := capture(t)
-	p := startPin(t, Options{})
+	p := startPin(t, Options{MaxOpenBytes: 2 * openCost(1)})
 	alice := newOwner(t)
 	c := alice.issue(t, p.Peer, Capability{})
 	var logs []*kolostore.Log

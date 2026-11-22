@@ -112,8 +112,9 @@ Server:
   closes the connections it accepted and its store and returns `ctx.Err()`.
   `Options`: `Dir` (data directory, required), `MaxBytes` (default
   `DefaultMaxBytes`, 100 GB), `Owners` (accepted owner keys; empty accepts
-  any and logs a warning at start), `MaxOwners` (owner records kept, default
-  `DefaultMaxOwners`), `AddTimeout` (the most time one `Add` pulls, default
+  any and logs a warning at start), `MaxOwners` (owner records an open peer keeps, default
+  `DefaultMaxOwners`, ignored with `Owners`), `MaxOpenBytes` (memory of the
+  open logs, default `DefaultMaxOpenBytes`), `AddTimeout` (the most time one `Add` pulls, default
   none), `Logger` (nil discards) and `Metrics` (a `prometheus.Registerer`
   that gets the `kolo_pin_*` metrics while `Serve` runs, or nil). Every
   connection is served by kolo-sync, so any peer pulls a hosted log, or
@@ -175,7 +176,7 @@ The pinning peer's rules:
   owner the peer has never seen, so a token revoked before its first use
   is refused; a note dated more than 60 s in the peer's future is refused
   (`ErrUnauthorized`), so it cannot lock the owner out. Each owner has one
-  record, which a later note or capability only replaces, and the peer keeps
+  record, which a later note or capability only replaces, and an open peer keeps
   at most `MaxOwners` of them: past that, a note or capability of a new owner
   is `ErrOwnerLimit`, and owners already kept are never refused.
 - The pinning peer never asks for entry keys (`kolosync.PullCiphertext`),
@@ -202,7 +203,7 @@ Errors work with `errors.Is`; none carries bytes a peer sent.
 - `ErrExpired`, `ErrRevoked`, `ErrQuotaExceeded`, `ErrDiskFull`.
 - `ErrOwnerLimit`: the peer keeps the most owner records it accepts and this
   owner is not one of them; its operator can raise `MaxOwners` or list the
-  owners.
+  owners (a peer that lists them has no such limit).
 - `ErrNotFound`: the peer does not hold the log for this owner.
 - `ErrInvalid`: the log did not verify; the peer kept what verified before.
 - `ErrTooLarge`, `ErrProtocol`, `ErrBusy` (try again later). `Remove`

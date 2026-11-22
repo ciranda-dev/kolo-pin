@@ -81,7 +81,7 @@ func (s *server) collectors() []prometheus.Collector {
 			defer s.disk.mu.Unlock()
 			return float64(s.disk.records)
 		}),
-		gauge("kolo_pin_owner_records_max", "The most owner records the peer keeps.", func() float64 { return float64(s.disk.maxRecords) }),
+		gauge("kolo_pin_owner_records_max", "The most owner records an open peer keeps; 0 when the peer lists its owners and keeps no limit.", func() float64 { return float64(s.disk.maxRecords) }),
 		gauge("kolo_pin_owners", "Owners with a capability in use or a held log.", func() float64 { return float64(s.totals().owners) }),
 		gauge("kolo_pin_logs", "Held logs, including logs whose delete failed.", func() float64 { return float64(s.totals().logs) }),
 		gauge("kolo_pin_entries", "Entries of all held logs, including logs whose delete failed.", func() float64 { return float64(s.totals().entries) }),

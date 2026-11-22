@@ -218,7 +218,10 @@ func TestRunRefusesBadConfig(t *testing.T) {
 		{append(base, "-owners", "abcd"), 2, "-owners"},
 		{append(base, "-max-owners", "0"), 2, "-max-owners"},
 		{append(base, "-max-owners", "-3"), 2, "-max-owners"},
-		{append(base, "-max-conns", "10001"), 2, "-max-conns"},
+		{append(base, "-max-conns", "2017"), 1, "MaxMemory"},
+		{append(base, "-max-conns", "0"), 2, "-max-conns"},
+		{append(base, "-max-open-bytes", "0"), 2, "-max-open-bytes"},
+		{append(base, "-max-open-bytes", "x"), 2, "-max-open-bytes"},
 		{append(base, "-max-conns", "x"), 2, "-max-conns"},
 		{append(base, "-max-conns-per-ip", "0"), 2, "-max-conns-per-ip"},
 		{append(base, "-add-timeout", "10"), 2, "-add-timeout"},
@@ -235,12 +238,12 @@ func TestRunRefusesBadConfig(t *testing.T) {
 
 func TestParseBytes(t *testing.T) {
 	for s, want := range map[string]uint64{"1": 1, "100GB": 100e9, "5MiB": 5 << 20, "7B": 7, "2TiB": 2 << 40} {
-		if got, err := parseBytes(s); err != nil || got != want {
+		if got, err := parseBytes("-max-bytes", s); err != nil || got != want {
 			t.Errorf("parseBytes(%q) = %d, %v; want %d", s, got, err, want)
 		}
 	}
 	for _, s := range []string{"", "-1", "GB", "1.5GB", "18446744073709551616", "abc"} {
-		if _, err := parseBytes(s); err == nil {
+		if _, err := parseBytes("-max-bytes", s); err == nil {
 			t.Errorf("parseBytes(%q) accepted", s)
 		}
 	}
@@ -310,10 +313,13 @@ func TestConnLimitFlags(t *testing.T) {
 	defer cancel()
 	dir := filepath.Join(t.TempDir(), "data")
 	_, stderr, code := started(t, ctx, []string{"run", "-data", dir, "-listen", "127.0.0.1:0", "-health", "off", "-metrics", "off",
-		"-log-format", "json", "-max-conns", "5", "-max-conns-per-ip", "2", "-max-owners", "7", "-add-timeout", "10m"}, nil, "serving")
+		"-log-format", "json", "-max-conns", "5", "-max-conns-per-ip", "2", "-max-owners", "7", "-max-open-bytes", "64MiB", "-add-timeout", "10m"}, nil, "serving")
 	key, addr := serving(t, stderr)
 	if !strings.Contains(stderr.String(), `"max-owners":7`) {
 		t.Errorf("the serving event does not show -max-owners:\n%s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), `"max-open-bytes":67108864`) {
+		t.Errorf("the serving event does not show -max-open-bytes:\n%s", stderr.String())
 	}
 	peer, _ := hex.DecodeString(key)
 	var held []*kolosecure.Conn
@@ -336,6 +342,34 @@ func TestConnLimitFlags(t *testing.T) {
 			c.Close()
 			t.Fatal("a third connection from one address was accepted with -max-conns-per-ip 2")
 		}
+	}
+	cancel()
+	if c := <-code; c != 0 {
+		t.Fatalf("exit %d", c)
+	}
+}
+
+// Without -max-conns the binary takes more than 100 connections: its default is the most kolo-transport's memory check allows.
+func TestDefaultMaxConns(t *testing.T) {
+	if defaultMaxConns != 2016 {
+		t.Fatalf("defaultMaxConns = %d, want 2016", defaultMaxConns)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	dir := filepath.Join(t.TempDir(), "data")
+	_, stderr, code := started(t, ctx, []string{"run", "-data", dir, "-listen", "127.0.0.1:0", "-health", "off", "-metrics", "off",
+		"-log-format", "json", "-max-conns-per-ip", "200"}, nil, "serving")
+	key, addr := serving(t, stderr)
+	peer, _ := hex.DecodeString(key)
+	for i := range 101 {
+		dctx, dcancel := context.WithTimeout(ctx, 5*time.Second)
+		id, _ := koloid.Generate()
+		c, err := kolosecure.Dial(dctx, addr, id, peer, nil)
+		dcancel()
+		if err != nil {
+			t.Fatalf("connection %d = %v", i, err)
+		}
+		defer c.Close()
 	}
 	cancel()
 	if c := <-code; c != 0 {
