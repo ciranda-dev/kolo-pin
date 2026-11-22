@@ -74,6 +74,9 @@ var (
 type Options struct {
 	// Dir is the data directory, holding identity.key and the store. It must be private; it is created with mode 0700.
 	Dir string
+	// Identity is the pinning peer's identity, which the listener given to Serve must use too. Nil loads it with
+	// LoadIdentity(Dir), which writes identity.key on first use; a given Identity writes no key file.
+	Identity *koloid.Identity
 	// MaxBytes is the most bytes the peer stores for all owners together. Default DefaultMaxBytes.
 	MaxBytes uint64
 	// Owners lists the owner keys the peer accepts capabilities and revoke notes from. Empty accepts any owner, and
@@ -143,15 +146,19 @@ type server struct {
 	open   map[*hosted]struct{}
 }
 
-// Serve runs a pinning peer on node, which must listen with LoadIdentity(opts.Dir), until ctx is done.
+// Serve runs a pinning peer on node, which must listen with opts.Identity, or with LoadIdentity(opts.Dir) when that is nil,
+// until ctx is done.
 // It closes the connections it accepted and its store before it returns ctx.Err() or the listener's error.
 func Serve(ctx context.Context, node *kolosecure.Listener, opts Options) error {
 	if node == nil || opts.Dir == "" {
 		return ErrInvalidArgument
 	}
-	id, err := LoadIdentity(opts.Dir)
-	if err != nil {
-		return err
+	id := opts.Identity
+	if id == nil {
+		var err error
+		if id, err = LoadIdentity(opts.Dir); err != nil {
+			return err
+		}
 	}
 	db, err := kolostore.OpenPebble(filepath.Join(opts.Dir, "store"))
 	if err != nil {
@@ -200,6 +207,7 @@ func Serve(ctx context.Context, node *kolosecure.Listener, opts Options) error {
 		s.close()
 		return err
 	}
+	s.offerLoaded()
 	if opts.Metrics != nil {
 		cs := s.collectors()
 		for i, c := range cs {
@@ -737,6 +745,9 @@ func (s *server) add(ctx context.Context, conn *kolosecure.Conn, logID kololog.L
 		}
 		return Info{}, syncErr(err)
 	}
+	for _, x := range o.logsOf() {
+		s.offer(o, x)
+	}
 	return s.info(o, h), nil
 }
 
@@ -934,18 +945,24 @@ func (s *server) revoke(note []byte) error {
 }
 
 // authorize gives every peer Ciphertext access; kolo-sync answers not found for a log it is not offered. A held log
-// is offered under its owner and ID at its first request, not at start, since Offer reads the header, which opens the log.
+// is offered when the peer starts and when an Add of it finishes; this offers it at a request if that failed.
 func (s *server) authorize(_, owner ed25519.PublicKey, logID kololog.LogID) kolosync.Access {
-	o := s.lookup(owner)
-	if o == nil {
-		return kolosync.Ciphertext
+	if o := s.lookup(owner); o != nil {
+		o.mu.Lock()
+		h := o.logs[logID]
+		o.mu.Unlock()
+		s.offer(o, h)
 	}
+	return kolosync.Ciphertext
+}
+
+// offer offers h to kolo-sync under its owner and ID, unless it is offered already or no longer covered.
+func (s *server) offer(o *owner, h *hosted) {
 	o.mu.Lock()
-	h := o.logs[logID]
 	skip := !o.covered(h) || h.offered
 	o.mu.Unlock()
 	if skip {
-		return kolosync.Ciphertext
+		return
 	}
 	h.Header() // opens and verifies the log outside o.mu, so Offer reads the header from memory
 	if s.gap != nil {
@@ -957,7 +974,27 @@ func (s *server) authorize(_, owner ed25519.PublicKey, logID kololog.LogID) kolo
 		h.offered = s.sync.Offer(h) == nil
 	}
 	o.mu.Unlock()
-	return kolosync.Ciphertext
+}
+
+// logsOf returns the logs o holds.
+func (o *owner) logsOf() []*hosted {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	hs := make([]*hosted, 0, len(o.logs))
+	for _, h := range o.logs {
+		hs = append(hs, h)
+	}
+	return hs
+}
+
+// offerLoaded offers every log load found, closing each after its header is read so start-up keeps at most one open.
+func (s *server) offerLoaded() {
+	for _, o := range s.snapshot() {
+		for _, h := range o.logsOf() {
+			s.offer(o, h)
+			h.closeIdle()
+		}
+	}
 }
 
 // syncErr maps a kolo-sync or kolo-store error to the pin error the peer answers with.
@@ -1125,6 +1162,15 @@ func (h *hosted) release(n uint64) {
 	h.known.Store(true)
 	h.last.Store(time.Now().UnixNano())
 	h.o.s.trim(h)
+}
+
+// closeIdle closes the replica unless a pull is using it.
+func (h *hosted) closeIdle() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.pulls == 0 {
+		h.closeRep()
+	}
 }
 
 func (h *hosted) idle(before time.Time) {

@@ -108,9 +108,13 @@ Server:
 - `LoadIdentity(dir)` loads the pinning peer's key from `dir/identity.key`,
   creating it on first use.
 - `Serve(ctx, node, opts)` runs a pinning peer on `node`, a
-  `*kolosecure.Listener` made with that key, until `ctx` is done, then
+  `*kolosecure.Listener` made with the identity of `Options.Identity`, or with
+  `LoadIdentity(opts.Dir)` when that is nil, until `ctx` is done, then
   closes the connections it accepted and its store and returns `ctx.Err()`.
-  `Options`: `Dir` (data directory, required), `MaxBytes` (default
+  `Options`: `Dir` (data directory, required), `Identity` (the peer's
+  `*koloid.Identity`, which the listener must use too; nil loads it with
+  `LoadIdentity(Dir)`, which writes `identity.key`, and a given one writes no
+  key file), `MaxBytes` (default
   `DefaultMaxBytes`, 100 GB), `Owners` (accepted owner keys; empty accepts
   any and logs a warning at start), `MaxOwners` (owner records an open peer keeps, default
   `DefaultMaxOwners`, ignored with `Owners`), `MaxOpenBytes` (memory of the
@@ -119,7 +123,9 @@ Server:
   that gets the `kolo_pin_*` metrics while `Serve` runs, or nil). Every
   connection is served by kolo-sync, so any peer pulls a hosted log, or
   gets a range of its entries with `kolosync.Fetch`, as ciphertext, by its
-  owner key and log ID. A hosted log is identified by both: another
+  owner key and log ID, including a `kolosync.Follower` that names it in its
+  first watch: the peer offers every hosted log it covers when it starts and
+  when an `Add` finishes. A hosted log is identified by both: another
   owner's log with the same ID is held, served and dropped on its own and
   never replaces it.
 

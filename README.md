@@ -143,7 +143,7 @@ kolo-pin id -data /var/lib/kolo-pin
 | Symbol | What it does |
 |---|---|
 | `LoadIdentity(dir)` | Load or create the pinning peer's key in `dir/identity.key` |
-| `Serve(ctx, node, opts)` | Run a pinning peer on a kolo-secure listener; `Options` sets `Dir`, `MaxBytes`, `Owners`, `MaxOwners`, `MaxOpenBytes`, `AddTimeout`, `Logger` and `Metrics` |
+| `Serve(ctx, node, opts)` | Run a pinning peer on a kolo-secure listener; `Options` sets `Dir`, `Identity`, `MaxBytes`, `Owners`, `MaxOwners`, `MaxOpenBytes`, `AddTimeout`, `Logger` and `Metrics` |
 | `Issue`, `IssueMany`, `ParseCapability` | Sign a capability for one pinning peer, or one per peer, and decode one |
 | `Add(ctx, id, peer, log, capability)` | Have the pinning peer pull and verify a log; call it again to send new entries and delete markers |
 | `Status`, `Remove` | Read or delete a hosted log; `id` must be the log's owner; `Remove` answers `ErrBusy` when the delete fails and the log stays as it was (served while covered) |

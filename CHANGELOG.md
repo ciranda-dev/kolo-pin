@@ -9,10 +9,18 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- `Options.Identity`: the pinning peer's identity for callers that already have one. The listener given to `Serve` must use
+  the same identity. Nil keeps `LoadIdentity(Dir)`, the only path that writes `identity.key`.
+
 - `Options.MaxOpenBytes` and the `-max-open-bytes` flag (`KOLO_PIN_MAX_OPEN_BYTES`): the memory the open logs may take, 256 MiB by
   default (`DefaultMaxOpenBytes`), counted as 128 bytes per log and 256 per entry, the measured cost rounded up. It replaces the
   fixed count of 64 open logs, so about 1,000 logs of 1,000 entries stay open instead of 64, and a large log closes idle ones by
   bytes. The serving event shows `max-open-bytes`.
+
+### Fixed
+
+- A hosted log is offered to the kolo-sync server when the peer starts and when an `Add` finishes, not only when a request
+  names it. A `kolosync.Follower` that named a log in its first watch learned nothing of it and stayed at no head and no peers.
 
 ### Changed
 
