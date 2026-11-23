@@ -223,6 +223,9 @@ func TestRunRefusesBadConfig(t *testing.T) {
 		{append(base, "-max-open-bytes", "0"), 2, "-max-open-bytes"},
 		{append(base, "-max-open-bytes", "x"), 2, "-max-open-bytes"},
 		{append(base, "-max-conns", "x"), 2, "-max-conns"},
+		{append(base, "-peer-bytes-per-second", "0"), 2, "-peer-bytes-per-second"},
+		{append(base, "-peer-burst-bytes", "9223372036854775808"), 2, "-peer-burst-bytes"},
+		{append(base, "-peer-burst-bytes", "1MiB"), 1, "peer byte budget"},
 		{append(base, "-max-conns-per-ip", "0"), 2, "-max-conns-per-ip"},
 		{append(base, "-add-timeout", "10"), 2, "-add-timeout"},
 		{append(base, "-add-timeout", "-1m"), 2, "-add-timeout"},
@@ -313,7 +316,8 @@ func TestConnLimitFlags(t *testing.T) {
 	defer cancel()
 	dir := filepath.Join(t.TempDir(), "data")
 	_, stderr, code := started(t, ctx, []string{"run", "-data", dir, "-listen", "127.0.0.1:0", "-health", "off", "-metrics", "off",
-		"-log-format", "json", "-max-conns", "5", "-max-conns-per-ip", "2", "-max-owners", "7", "-max-open-bytes", "64MiB", "-add-timeout", "10m"}, nil, "serving")
+		"-log-format", "json", "-max-conns", "5", "-max-conns-per-ip", "2", "-max-owners", "7", "-max-open-bytes", "64MiB", "-add-timeout", "10m",
+		"-peer-bytes-per-second", "64MiB", "-peer-burst-bytes", "512MiB"}, nil, "serving")
 	key, addr := serving(t, stderr)
 	if !strings.Contains(stderr.String(), `"max-owners":7`) {
 		t.Errorf("the serving event does not show -max-owners:\n%s", stderr.String())

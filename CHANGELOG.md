@@ -17,6 +17,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   fixed count of 64 open logs, so about 1,000 logs of 1,000 entries stay open instead of 64, and a large log closes idle ones by
   bytes. The serving event shows `max-open-bytes`.
 
+- `Options.PeerBytesPerSecond` and `Options.PeerBurstBytes`, with the `-peer-bytes-per-second` and `-peer-burst-bytes` flags
+  (`KOLO_PIN_PEER_BYTES_PER_SECOND`, `KOLO_PIN_PEER_BURST_BYTES`): the byte budget of each peer key pulling from the peer,
+  passed to kolo-sync's `NewServerWith`. Zero keeps kolo-sync's defaults, 32 MiB/s and 256 MiB; a pull past the budget is
+  `kolosync.ErrBusy`, and a negative value or a burst below 8 MiB is `ErrInvalidArgument`. It needs the unreleased kolo-sync
+  that adds `ServerOptions.PeerBytesPerSecond`.
+
 ### Fixed
 
 - A hosted log is offered to the kolo-sync server after the peer starts and when an `Add` finishes, not only when a request

@@ -56,6 +56,7 @@ func main() {
 type config struct {
 	data, listen, health, metrics, owners, logFormat, logLevel, maxBytes string
 	maxOwners, maxConns, maxConnsPerIP, addTimeout, maxOpenBytes         string
+	peerRate, peerBurst                                                  string
 }
 
 func parse(name string, args []string, env func(string) string, stderr io.Writer) (config, error) {
@@ -76,6 +77,8 @@ func parse(name string, args []string, env func(string) string, stderr io.Writer
 		fs.StringVar(&c.maxOpenBytes, "max-open-bytes", def("KOLO_PIN_MAX_OPEN_BYTES", ""), "the memory the open logs may take, counted as 128 bytes per log and 256 per entry, such as 512MiB; default 256MiB (KOLO_PIN_MAX_OPEN_BYTES)")
 		fs.StringVar(&c.maxConns, "max-conns", def("KOLO_PIN_MAX_CONNS", ""), "the most connections at once, handshaking or open; default 2016, the most kolo-transport's default memory allows (KOLO_PIN_MAX_CONNS)")
 		fs.StringVar(&c.maxConnsPerIP, "max-conns-per-ip", def("KOLO_PIN_MAX_CONNS_PER_IP", ""), "the most connections from one source address; default 4, at most -max-conns (KOLO_PIN_MAX_CONNS_PER_IP)")
+		fs.StringVar(&c.peerRate, "peer-bytes-per-second", def("KOLO_PIN_PEER_BYTES_PER_SECOND", ""), "the `bytes` each peer key may pull per second over all its connections, such as 64MiB; default 32MiB (KOLO_PIN_PEER_BYTES_PER_SECOND)")
+		fs.StringVar(&c.peerBurst, "peer-burst-bytes", def("KOLO_PIN_PEER_BURST_BYTES", ""), "the most `bytes` a peer key may pull at once, at least 8MiB; default 256MiB (KOLO_PIN_PEER_BURST_BYTES)")
 		fs.StringVar(&c.addTimeout, "add-timeout", def("KOLO_PIN_ADD_TIMEOUT", ""), "the most `time` one add may spend pulling a log, such as 10m; default none (KOLO_PIN_ADD_TIMEOUT)")
 		fs.StringVar(&c.owners, "owners", def("KOLO_PIN_OWNERS", ""), "comma-separated hex owner `keys` to accept; empty accepts any owner, and anyone can then fill the disk (KOLO_PIN_OWNERS)")
 		fs.StringVar(&c.health, "health", def("KOLO_PIN_HEALTH", "127.0.0.1:7451"), "TCP `address` of the HTTP health endpoint /healthz, IPv4, or \"off\" (KOLO_PIN_HEALTH)")
@@ -145,7 +148,9 @@ func serve(ctx context.Context, c config, stderr io.Writer) int {
 	if c.maxOpenBytes != "" {
 		maxOpen, err8 = parseBytes("-max-open-bytes", c.maxOpenBytes)
 	}
-	if err := errors.Join(err, err2, err3, err4, err5, err6, err7, err8); err != nil {
+	peerRate, err9 := parseBudget("-peer-bytes-per-second", c.peerRate)
+	peerBurst, err10 := parseBudget("-peer-burst-bytes", c.peerBurst)
+	if err := errors.Join(err, err2, err3, err4, err5, err6, err7, err8, err9, err10); err != nil {
 		fmt.Fprintln(stderr, "kolo-pin:", err)
 		return 2
 	}
@@ -196,7 +201,8 @@ func serve(ctx context.Context, c config, stderr io.Writer) int {
 	}
 	done := make(chan error, 1)
 	go func() {
-		done <- pin.Serve(ctx, ln, pin.Options{Dir: c.data, MaxBytes: maxBytes, Owners: owners, MaxOwners: maxOwners, MaxOpenBytes: maxOpen, AddTimeout: addTimeout, Logger: log, Metrics: reg})
+		done <- pin.Serve(ctx, ln, pin.Options{Dir: c.data, MaxBytes: maxBytes, Owners: owners, MaxOwners: maxOwners, MaxOpenBytes: maxOpen,
+			PeerBytesPerSecond: peerRate, PeerBurstBytes: peerBurst, AddTimeout: addTimeout, Logger: log, Metrics: reg})
 	}()
 	err = <-done
 	if ctx.Err() == nil {
@@ -315,6 +321,18 @@ func parseBytes(name, s string) (uint64, error) {
 		return 0, fmt.Errorf("%s %q: want a positive number of bytes, such as 500MB", name, s)
 	}
 	return v, nil
+}
+
+// parseBudget reads a byte count of the flag name up to math.MaxInt64; empty is 0, which means the default.
+func parseBudget(name, s string) (int64, error) {
+	if s == "" {
+		return 0, nil
+	}
+	n, err := parseBytes(name, s)
+	if err == nil && n > math.MaxInt64 {
+		err = fmt.Errorf("%s %q: want at most %d bytes", name, s, int64(math.MaxInt64))
+	}
+	return int64(n), err
 }
 
 // parseCount reads a count from 1 to max; empty is 0, which means the default.
