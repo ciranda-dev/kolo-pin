@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -73,6 +74,26 @@ func TestFollowerPullsLogOfferedAtStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.restart(t)
+	follow(t, ctx, p.Peer, alice, l)
+}
+
+// The stored logs are offered after the peer answers, so a large store does not delay the start.
+func TestServeAnswersWhileOfferingStoredLogs(t *testing.T) {
+	checkGoroutines(t)
+	ctx := testCtx(t)
+	p := startPin(t, Options{})
+	alice := newOwner(t)
+	l := alice.log(t, "a0", "a1", "a2")
+	if _, err := Add(ctx, alice.id, p.Peer, l, alice.issue(t, p.Peer, Capability{})); err != nil {
+		t.Fatal(err)
+	}
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	gap = func(*hosted) { <-release }
+	t.Cleanup(func() { unblock(); gap = nil })
+	p.restart(t)
+	unblock()
 	follow(t, ctx, p.Peer, alice, l)
 }
 

@@ -42,7 +42,7 @@ One lock guards the disk's byte counts, and it is held only for arithmetic: a wr
 
 ## Memory
 
-An open kolo-store log keeps its tree hashes and a compact copy of each record in memory and reads ciphertexts from disk. The pinning peer opens a log when a request needs it, and at start opens each stored log once to read its header for kolo-sync, closing it again before the next (start-up reads every stored log once), closes it after a minute unused, and keeps the open ones within `MaxOpenBytes` (`-max-open-bytes`, default 256 MiB, `DefaultMaxOpenBytes`).
+An open kolo-store log keeps its tree hashes and a compact copy of each record in memory and reads ciphertexts from disk. The pinning peer opens a log when a request needs it, and after start, once it already serves, opens each stored log in turn to read its header for kolo-sync, closing it again before the next, closes it after a minute unused, and keeps the open ones within `MaxOpenBytes` (`-max-open-bytes`, default 256 MiB, `DefaultMaxOpenBytes`).
 
 `MaxOpenBytes` counts an open log as 128 bytes plus 256 bytes per entry. Past it, the least recently used idle logs are closed, never one being pulled into, and it is checked when a log opens and when a pull ends. It is a quarter of kolo-transport's default `MaxMemory` (1 GiB), the share kolo-sync also uses for its answers, so the open logs, the connections and the answers fit together on a host sized for the transport. At 1,000 entries per log it keeps about 1,000 logs open; there is no count of logs. A log being pulled into can grow past the budget until its pull ends, and then closes the idle ones; its size is bounded by the owner's quota and `MaxBytes`. Raise it on a host with more memory, lower it on a smaller one: reopening a log reads and verifies all of it, so a budget too small for the logs in use costs CPU and disk reads, not correctness.
 
@@ -52,6 +52,8 @@ Measured on this machine (macOS, arm64, Go 1.27.4; live heap after two collectio
 |---|---|---|
 | Open log with no entry | 93 to 106 bytes | 128 |
 | Open log, per entry | 248 to 266 bytes (entries of 10 and 1,000 bytes; 1 to 20,000 entries per log) | 256 |
+
+Opening a log reads and verifies all of it, and the time follows the number of entries, not their size. Measured on this machine (load average above 10; each figure is the range of three restarts and includes the store open and one request): 20,000 entries of 100 bytes in 20 logs took 0.37 to 0.46 s, 20,000 entries of 1,024 bytes 0.49 to 0.52 s, 2,000 entries of 1,024 bytes in 200 logs 0.10 to 0.14 s, and 500 entries of 60 KiB in 5 logs 0.05 to 0.14 s. That is about 20 to 25 µs per small entry, so 10 million small entries would take about 4 minutes (extrapolated, not measured). The peer answers during this time; a log not yet offered is offered at the first request that names it, and a kolo-sync Follower that names it in its first watch learns of it once its turn has come.
 
 Logs are opened by any peer that knows their owner keys and log IDs, so `MaxOpenBytes` is what bounds that memory, with the rest of the process left over for connections and kolo-sync.
 

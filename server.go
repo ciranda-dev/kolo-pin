@@ -210,7 +210,6 @@ func Serve(ctx context.Context, node *kolosecure.Listener, opts Options) error {
 		s.close()
 		return err
 	}
-	s.offerLoaded()
 	if opts.Metrics != nil {
 		cs := s.collectors()
 		for i, c := range cs {
@@ -244,6 +243,7 @@ func Serve(ctx context.Context, node *kolosecure.Listener, opts Options) error {
 	var wg sync.WaitGroup
 	every := sweepEvery
 	wg.Go(func() { s.sweepLoop(ctx, every) })
+	wg.Go(func() { s.offerLoaded(ctx) })
 	for {
 		conn, err := node.Accept(ctx)
 		if err != nil {
@@ -990,10 +990,14 @@ func (o *owner) logsOf() []*hosted {
 	return hs
 }
 
-// offerLoaded offers every log load found, closing each after its header is read so start-up keeps at most one open.
-func (s *server) offerLoaded() {
+// offerLoaded offers every log load found while the peer already serves, closing each after its header is read so it keeps
+// at most one open. Opening a log reads and verifies all of it, which takes minutes on a large store.
+func (s *server) offerLoaded(ctx context.Context) {
 	for _, o := range s.snapshot() {
 		for _, h := range o.logsOf() {
+			if ctx.Err() != nil {
+				return
+			}
 			s.offer(o, h)
 			h.closeIdle()
 		}
