@@ -34,17 +34,21 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
-- Breaking: the 64 open logs limit is gone. The memory of the open logs is now bounded by `MaxOpenBytes`, not by a count, so
+- **Breaking:** a pinning peer answers busy (`kolosync.ErrBusy`) to a peer key that pulls more than 256 MiB faster than 32 MiB a
+  second, over all its connections, where it served it without end: it passes kolo-sync's per-peer byte budget, on by default.
+  Raise `PeerBytesPerSecond` and `PeerBurstBytes` (`-peer-bytes-per-second`, `-peer-burst-bytes`) for owners that pull more,
+  or set both to 1 TiB to turn it off.
+- **Breaking:** the 64 open logs limit is gone. The memory of the open logs is now bounded by `MaxOpenBytes`, not by a count, so
   a peer with much memory and many small logs keeps more open than before; set `MaxOpenBytes` to bound it for your host.
-- Breaking: the `-max-conns` default is 2016 instead of 100, the most kolo-transport's default memory check accepts (its
+- **Breaking:** the `-max-conns` default is 2016 instead of 100, the most kolo-transport's default memory check accepts (its
   `MaxMemory` divided by the receive window of a connection, less 32 dialed connections), and `-max-conns` and
   `-max-conns-per-ip` no longer stop at 10000: a value the transport's memory check refuses fails at start with its message.
-- Breaking: `MaxOwners` (`-max-owners`) applies only to an open peer, one with no `Owners` list. A peer that lists its owners
+- **Breaking:** `MaxOwners` (`-max-owners`) applies only to an open peer, one with no `Owners` list. A peer that lists its owners
   keeps no owner limit and ignores `MaxOwners`; `kolo_pin_owner_records_max` is 0 then.
 - Start-up reads the owner records and the entry counts a chunk at a time, so its memory does not grow with the number of
   records. Owners with a capability in use or a stored log are still loaded.
 
-- Breaking: a pinning peer serves an add only when the key the connection proved is the capability's owner. A requester
+- **Breaking:** a pinning peer serves an add only when the key the connection proved is the capability's owner. A requester
   with another key, even with a valid capability, now gets `ErrUnauthorized`, before the capability's expiry or
   revocation is checked. Add with the owner's identity.
 
