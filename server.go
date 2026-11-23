@@ -74,7 +74,7 @@ var (
 type Options struct {
 	// Dir is the data directory, holding identity.key and the store. It must be private; it is created with mode 0700.
 	Dir string
-	// Identity is the pinning peer's identity, which the listener given to Serve must use too. Nil loads it with
+	// Identity is the pinning peer's identity; Serve refuses a listener that uses another with ErrInvalidArgument. Nil loads it with
 	// LoadIdentity(Dir), which writes identity.key on first use; a given Identity writes no key file.
 	Identity *koloid.Identity
 	// MaxBytes is the most bytes the peer stores for all owners together. Default DefaultMaxBytes.
@@ -159,6 +159,9 @@ func Serve(ctx context.Context, node *kolosecure.Listener, opts Options) error {
 		if id, err = LoadIdentity(opts.Dir); err != nil {
 			return err
 		}
+	}
+	if !bytes.Equal(node.PublicKey(), id.PublicKey()) {
+		return fmt.Errorf("%w: the listener does not use the pinning peer's identity", ErrInvalidArgument)
 	}
 	db, err := kolostore.OpenPebble(filepath.Join(opts.Dir, "store"))
 	if err != nil {

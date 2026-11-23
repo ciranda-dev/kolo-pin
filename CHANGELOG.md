@@ -9,8 +9,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
-- `Options.Identity`: the pinning peer's identity for callers that already have one. The listener given to `Serve` must use
-  the same identity. Nil keeps `LoadIdentity(Dir)`, the only path that writes `identity.key`.
+- `Options.Identity`: the pinning peer's identity for callers that already have one. `Serve` refuses a listener that uses
+  another identity with `ErrInvalidArgument`, before it serves. It needs the unreleased kolo-secure that adds `Listener.PublicKey`. Nil keeps `LoadIdentity(Dir)`, the only path that writes `identity.key`.
 
 - `Options.MaxOpenBytes` and the `-max-open-bytes` flag (`KOLO_PIN_MAX_OPEN_BYTES`): the memory the open logs may take, 256 MiB by
   default (`DefaultMaxOpenBytes`), counted as 128 bytes per log and 256 per entry, the measured cost rounded up. It replaces the

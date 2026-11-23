@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	kolosecure "github.com/ciranda-dev/kolo-secure"
 	kolostore "github.com/ciranda-dev/kolo-store"
@@ -125,6 +126,38 @@ func TestServeUsesGivenIdentity(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "identity.key")); !os.IsNotExist(err) {
 		t.Fatalf("identity.key after Serve with an Identity: %v", err)
+	}
+}
+
+// A listener that does not use the pinning peer's identity, given or loaded, would make every capability fail as
+// issued for another peer, so Serve refuses it before serving.
+func TestServeRefusesOtherListenerIdentity(t *testing.T) {
+	checkGoroutines(t)
+	ctx := testCtx(t)
+	for name, opts := range map[string]Options{
+		"given":  {Identity: generate(t)},
+		"loaded": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			opts.Dir = privateDir(t)
+			sctx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			ln, err := kolosecure.Listen(sctx, "127.0.0.1:0", generate(t), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ln.Close()
+			done := make(chan error, 1)
+			go func() { done <- Serve(sctx, ln, opts) }()
+			select {
+			case err := <-done:
+				if !errors.Is(err, ErrInvalidArgument) {
+					t.Fatalf("Serve = %v, want ErrInvalidArgument", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("Serve runs on a listener with another identity")
+			}
+		})
 	}
 }
 

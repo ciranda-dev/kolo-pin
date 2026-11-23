@@ -109,7 +109,7 @@ Server:
   creating it on first use.
 - `Serve(ctx, node, opts)` runs a pinning peer on `node`, a
   `*kolosecure.Listener` made with the identity of `Options.Identity`, or with
-  `LoadIdentity(opts.Dir)` when that is nil, until `ctx` is done, then
+  `LoadIdentity(opts.Dir)` when that is nil (any other identity is `ErrInvalidArgument`, before it serves), until `ctx` is done, then
   closes the connections it accepted and its store and returns `ctx.Err()`.
   `Options`: `Dir` (data directory, required), `Identity` (the peer's
   `*koloid.Identity`, which the listener must use too; nil loads it with
