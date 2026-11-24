@@ -42,7 +42,7 @@ One lock guards the disk's byte counts, and it is held only for arithmetic: a wr
 
 ## Memory
 
-An open kolo-store log keeps its tree hashes and a compact copy of each record in memory and reads ciphertexts from disk. The pinning peer opens a log when a request needs it, closes it after a minute unused, and keeps the open ones within `MaxOpenBytes` (`-max-open-bytes`, default 256 MiB, `DefaultMaxOpenBytes`).
+An open kolo-store log keeps its tree hashes and a compact copy of each record in memory and reads ciphertexts from disk. The pinning peer opens a log when a request needs it, and at start opens each stored log once to read its header for kolo-sync, closing it again before the next (start-up reads every stored log once), closes it after a minute unused, and keeps the open ones within `MaxOpenBytes` (`-max-open-bytes`, default 256 MiB, `DefaultMaxOpenBytes`).
 
 `MaxOpenBytes` counts an open log as 128 bytes plus 256 bytes per entry. Past it, the least recently used idle logs are closed, never one being pulled into, and it is checked when a log opens and when a pull ends. It is a quarter of kolo-transport's default `MaxMemory` (1 GiB), the share kolo-sync also uses for its answers, so the open logs, the connections and the answers fit together on a host sized for the transport. At 1,000 entries per log it keeps about 1,000 logs open; there is no count of logs. A log being pulled into can grow past the budget until its pull ends, and then closes the idle ones; its size is bounded by the owner's quota and `MaxBytes`. Raise it on a host with more memory, lower it on a smaller one: reopening a log reads and verifies all of it, so a budget too small for the logs in use costs CPU and disk reads, not correctness.
 

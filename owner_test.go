@@ -229,9 +229,9 @@ func TestAddNeverSendsKeys(t *testing.T) {
 	}
 }
 
-// A log removed while a request is between reading its header and offering it is never offered: the pull that
-// raced the Remove, and every later one, get not found.
-func TestRemoveDuringAuthorize(t *testing.T) {
+// A log removed while its Add is between reading its header and offering it is never offered: every pull of it,
+// also after a restart, gets not found.
+func TestRemoveDuringOffer(t *testing.T) {
 	checkGoroutines(t)
 	ctx := testCtx(t)
 	alice := newOwner(t)
@@ -260,7 +260,7 @@ func TestRemoveDuringAuthorize(t *testing.T) {
 	if _, err := Add(ctx, alice.id, p.Peer, l, alice.issue(t, p.Peer, Capability{})); err != nil {
 		t.Fatal(err)
 	}
-	p.restart(t) // so the log's header is not in memory yet
+	p.restart(t)
 	for range 2 {
 		if _, err := pullFrom(t, ctx, p.Peer, alice.id.PublicKey(), l.ID()); !errors.Is(err, kolosync.ErrNotFound) {
 			t.Fatalf("pull of a log removed during its first request = %v, want kolosync.ErrNotFound", err)
@@ -271,8 +271,8 @@ func TestRemoveDuringAuthorize(t *testing.T) {
 	}
 }
 
-// A held log is offered at its first request and only then; later requests skip the header check and Offer.
-func TestAuthorizeOffersOnce(t *testing.T) {
+// A hosted log is offered when its Add finishes and once; requests skip the header check and Offer.
+func TestOfferedOnce(t *testing.T) {
 	checkGoroutines(t)
 	ctx := testCtx(t)
 	var srv *server
@@ -292,19 +292,16 @@ func TestAuthorizeOffersOnce(t *testing.T) {
 		defer o.mu.Unlock()
 		return o.logs[l.ID()].offered
 	}
-	if offered() {
-		t.Fatal("offered before any request")
+	if !offered() {
+		t.Fatal("not offered when its Add finished")
 	}
 	if _, err := pullFrom(t, ctx, p.Peer, alice.id.PublicKey(), l.ID()); err != nil {
 		t.Fatal(err)
-	}
-	if !offered() {
-		t.Fatal("not marked offered after a request")
 	}
 	if _, err := pullFrom(t, ctx, p.Peer, alice.id.PublicKey(), l.ID()); err != nil {
 		t.Fatal(err)
 	}
 	if n := gaps.Load(); n != 1 {
-		t.Fatalf("the log was offered %d times over two pulls, want 1", n)
+		t.Fatalf("the log was offered %d times over an Add and two pulls, want 1", n)
 	}
 }

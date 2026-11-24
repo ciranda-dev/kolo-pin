@@ -340,13 +340,14 @@ func TestFailedDropOfUncoveredLog(t *testing.T) {
 	if n := f.fails.Load(); n > 0 {
 		t.Fatalf("%d delete failures left unused", n)
 	}
+	before := gaps.Load()
 	if _, err := Status(ctx, alice.id, p.Peer, l2.ID()); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Status of the uncovered log = %v, want ErrNotFound", err)
 	}
 	if _, err := pullFrom(t, ctx, p.Peer, key, l2.ID()); !errors.Is(err, kolosync.ErrNotFound) {
 		t.Fatalf("pull of the uncovered log = %v, want kolosync.ErrNotFound", err)
 	}
-	if n := gaps.Load(); n != 0 {
+	if n := gaps.Load() - before; n != 0 {
 		t.Fatalf("the uncovered log was opened for %d pulls, want 0", n)
 	}
 	again := alice.issue(t, p.Peer, Capability{Issued: now})
@@ -360,9 +361,9 @@ func TestFailedDropOfUncoveredLog(t *testing.T) {
 	mustEqualEntries(t, l2, rep, 1)
 }
 
-// A log whose capability changes to one that does not cover it, with a failed delete, while a pull is between
+// A log whose capability changes to one that does not cover it, with a failed delete, while its Add is between
 // reading its header and offering it, is not offered.
-func TestFailedDropDuringAuthorize(t *testing.T) {
+func TestFailedDropDuringOffer(t *testing.T) {
 	checkGoroutines(t)
 	ctx := testCtx(t)
 	alice := newOwner(t)
@@ -371,7 +372,10 @@ func TestFailedDropDuringAuthorize(t *testing.T) {
 	var p *pinPeer
 	narrowed := make(chan error, 1)
 	var once sync.Once
-	gap = func(*hosted) {
+	gap = func(h *hosted) {
+		if h.id != l2.ID() {
+			return
+		}
 		once.Do(func() {
 			narrow := alice.issue(t, p.Peer, Capability{Issued: now, Logs: []kololog.LogID{l1.ID()}})
 			_, err := Add(ctx, alice.id, p.Peer, l1, narrow)
@@ -388,7 +392,7 @@ func TestFailedDropDuringAuthorize(t *testing.T) {
 		}
 	}
 	if _, err := pullFrom(t, ctx, p.Peer, alice.id.PublicKey(), l2.ID()); !errors.Is(err, kolosync.ErrNotFound) {
-		t.Fatalf("pull of a log uncovered during its first request = %v, want kolosync.ErrNotFound", err)
+		t.Fatalf("pull of a log uncovered during its offer = %v, want kolosync.ErrNotFound", err)
 	}
 	if err := <-narrowed; err != nil {
 		t.Fatal(err)
