@@ -45,6 +45,8 @@ peer you use alone or inside a network you trust. At start it logs
 `open peer: every owner key is accepted ...` at warn level; to serve known
 people, list their keys in `-owners`.
 
+At start the peer serves at once and then reads every stored log once, in the background and one at a time, to offer it to kolo-sync; the time follows the number of entries (about 20 to 25 µs for a small entry; see "Memory" in [limits.md](limits.md)).
+
 Logs are slog events: `serving` (key, address, bytes used, limit, owner
 records, open-log budget),
 `pinned`, `refused` (with the reason), `done` (remove, revoke), `dropped`

@@ -3,7 +3,7 @@ package pin
 import "errors"
 
 var (
-	// ErrInvalidArgument means a nil identity, log or listener, a key of the wrong size (also in a log's header), or a missing option.
+	// ErrInvalidArgument means a nil identity, log or listener, a key of the wrong size (also in a log's header), a missing option, or a listener given to Serve that does not use the pinning peer's identity.
 	ErrInvalidArgument = errors.New("pin: invalid argument")
 	// ErrInvalidCapability means a capability or revoke note that is malformed or whose signature does not verify.
 	ErrInvalidCapability = errors.New("pin: invalid capability")

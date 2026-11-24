@@ -9,8 +9,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
-- `Options.Identity`: the pinning peer's identity for callers that already have one. The listener given to `Serve` must use
-  the same identity. Nil keeps `LoadIdentity(Dir)`, the only path that writes `identity.key`.
+- `Options.Identity`: the pinning peer's identity for callers that already have one. `Serve` refuses a listener that uses
+  another identity with `ErrInvalidArgument`, before it serves. It needs the unreleased kolo-secure that adds `Listener.PublicKey`. Nil keeps `LoadIdentity(Dir)`, the only path that writes `identity.key`.
 
 - `Options.MaxOpenBytes` and the `-max-open-bytes` flag (`KOLO_PIN_MAX_OPEN_BYTES`): the memory the open logs may take, 256 MiB by
   default (`DefaultMaxOpenBytes`), counted as 128 bytes per log and 256 per entry, the measured cost rounded up. It replaces the
@@ -19,8 +19,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
-- A hosted log is offered to the kolo-sync server when the peer starts and when an `Add` finishes, not only when a request
+- A hosted log is offered to the kolo-sync server after the peer starts and when an `Add` finishes, not only when a request
   names it. A `kolosync.Follower` that named a log in its first watch learned nothing of it and stayed at no head and no peers.
+  This holds with kolo-sync v0.1.1 or later, whose server answers a watch from the offered logs; the release requires it.
+- After a start, the peer serves at once and offers the stored logs in the background, one at a time. Opening a log reads
+  and verifies all of it, about 20 to 25 µs per small entry measured (docs/limits.md), so offering them before serving
+  would have delayed the start by minutes on a large store.
 
 ### Changed
 

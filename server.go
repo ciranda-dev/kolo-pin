@@ -74,7 +74,7 @@ var (
 type Options struct {
 	// Dir is the data directory, holding identity.key and the store. It must be private; it is created with mode 0700.
 	Dir string
-	// Identity is the pinning peer's identity, which the listener given to Serve must use too. Nil loads it with
+	// Identity is the pinning peer's identity; Serve refuses a listener that uses another with ErrInvalidArgument. Nil loads it with
 	// LoadIdentity(Dir), which writes identity.key on first use; a given Identity writes no key file.
 	Identity *koloid.Identity
 	// MaxBytes is the most bytes the peer stores for all owners together. Default DefaultMaxBytes.
@@ -160,6 +160,9 @@ func Serve(ctx context.Context, node *kolosecure.Listener, opts Options) error {
 			return err
 		}
 	}
+	if !bytes.Equal(node.PublicKey(), id.PublicKey()) {
+		return fmt.Errorf("%w: the listener does not use the pinning peer's identity", ErrInvalidArgument)
+	}
 	db, err := kolostore.OpenPebble(filepath.Join(opts.Dir, "store"))
 	if err != nil {
 		return err
@@ -207,7 +210,6 @@ func Serve(ctx context.Context, node *kolosecure.Listener, opts Options) error {
 		s.close()
 		return err
 	}
-	s.offerLoaded()
 	if opts.Metrics != nil {
 		cs := s.collectors()
 		for i, c := range cs {
@@ -241,6 +243,7 @@ func Serve(ctx context.Context, node *kolosecure.Listener, opts Options) error {
 	var wg sync.WaitGroup
 	every := sweepEvery
 	wg.Go(func() { s.sweepLoop(ctx, every) })
+	wg.Go(func() { s.offerLoaded(ctx) })
 	for {
 		conn, err := node.Accept(ctx)
 		if err != nil {
@@ -987,10 +990,14 @@ func (o *owner) logsOf() []*hosted {
 	return hs
 }
 
-// offerLoaded offers every log load found, closing each after its header is read so start-up keeps at most one open.
-func (s *server) offerLoaded() {
+// offerLoaded offers every log load found while the peer already serves, closing each after its header is read so it keeps
+// at most one open. Opening a log reads and verifies all of it, which takes minutes on a large store.
+func (s *server) offerLoaded(ctx context.Context) {
 	for _, o := range s.snapshot() {
 		for _, h := range o.logsOf() {
+			if ctx.Err() != nil {
+				return
+			}
 			s.offer(o, h)
 			h.closeIdle()
 		}
