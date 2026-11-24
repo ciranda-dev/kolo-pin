@@ -39,6 +39,10 @@ const usage = `usage:
 Run "kolo-pin run -h" for the flags and their environment variables.
 `
 
+// defaultMaxConns is kolo-transport's default MaxMemory divided by its default MaxConnReceiveWindow, less its default
+// MaxDialed (32), the most connections its memory check accepts.
+const defaultMaxConns = kolotransport.DefaultMaxMemory/kolotransport.DefaultMaxConnReceiveWindow - 32
+
 // programStart is when the program started; kolo_pin_uptime_seconds counts from it.
 var programStart = time.Now()
 
@@ -51,7 +55,7 @@ func main() {
 
 type config struct {
 	data, listen, health, metrics, owners, logFormat, logLevel, maxBytes string
-	maxOwners, maxConns, maxConnsPerIP, addTimeout                       string
+	maxOwners, maxConns, maxConnsPerIP, addTimeout, maxOpenBytes         string
 }
 
 func parse(name string, args []string, env func(string) string, stderr io.Writer) (config, error) {
@@ -68,8 +72,9 @@ func parse(name string, args []string, env func(string) string, stderr io.Writer
 	if name == "run" {
 		fs.StringVar(&c.listen, "listen", def("KOLO_PIN_LISTEN", "127.0.0.1:7450"), "UDP `address` for kolo-secure connections, IPv4; \"0.0.0.0:7450\" on a VPS (KOLO_PIN_LISTEN)")
 		fs.StringVar(&c.maxBytes, "max-bytes", def("KOLO_PIN_MAX_BYTES", "100GB"), "the most `bytes` stored for all owners, such as 500MB or 2TiB (KOLO_PIN_MAX_BYTES)")
-		fs.StringVar(&c.maxOwners, "max-owners", def("KOLO_PIN_MAX_OWNERS", ""), "the most owner records kept, one per owner key ever seen; default 100000 (KOLO_PIN_MAX_OWNERS)")
-		fs.StringVar(&c.maxConns, "max-conns", def("KOLO_PIN_MAX_CONNS", ""), "the most connections at once, handshaking or open; default 100, up to 10000 (KOLO_PIN_MAX_CONNS)")
+		fs.StringVar(&c.maxOwners, "max-owners", def("KOLO_PIN_MAX_OWNERS", ""), "the most owner records an open peer keeps, one per owner key ever seen; default 100000, ignored with -owners (KOLO_PIN_MAX_OWNERS)")
+		fs.StringVar(&c.maxOpenBytes, "max-open-bytes", def("KOLO_PIN_MAX_OPEN_BYTES", ""), "the memory the open logs may take, counted as 128 bytes per log and 256 per entry, such as 512MiB; default 256MiB (KOLO_PIN_MAX_OPEN_BYTES)")
+		fs.StringVar(&c.maxConns, "max-conns", def("KOLO_PIN_MAX_CONNS", ""), "the most connections at once, handshaking or open; default 2016, the most kolo-transport's default memory allows (KOLO_PIN_MAX_CONNS)")
 		fs.StringVar(&c.maxConnsPerIP, "max-conns-per-ip", def("KOLO_PIN_MAX_CONNS_PER_IP", ""), "the most connections from one source address; default 4, at most -max-conns (KOLO_PIN_MAX_CONNS_PER_IP)")
 		fs.StringVar(&c.addTimeout, "add-timeout", def("KOLO_PIN_ADD_TIMEOUT", ""), "the most `time` one add may spend pulling a log, such as 10m; default none (KOLO_PIN_ADD_TIMEOUT)")
 		fs.StringVar(&c.owners, "owners", def("KOLO_PIN_OWNERS", ""), "comma-separated hex owner `keys` to accept; empty accepts any owner, and anyone can then fill the disk (KOLO_PIN_OWNERS)")
@@ -129,13 +134,18 @@ func serve(ctx context.Context, c config, stderr io.Writer) int {
 	if err == nil {
 		err = checkAddrs(c)
 	}
-	maxBytes, err2 := parseBytes(c.maxBytes)
+	maxBytes, err2 := parseBytes("-max-bytes", c.maxBytes)
 	owners, err3 := parseOwners(c.owners)
 	maxOwners, err4 := parseCount("-max-owners", c.maxOwners, math.MaxInt64)
-	maxConns, err5 := parseCount("-max-conns", c.maxConns, 10000)
-	perIP, err6 := parseCount("-max-conns-per-ip", c.maxConnsPerIP, 10000)
+	maxConns, err5 := parseCount("-max-conns", c.maxConns, math.MaxInt32)
+	perIP, err6 := parseCount("-max-conns-per-ip", c.maxConnsPerIP, math.MaxInt32)
 	addTimeout, err7 := parseTimeout(c.addTimeout)
-	if err := errors.Join(err, err2, err3, err4, err5, err6, err7); err != nil {
+	var maxOpen uint64
+	var err8 error
+	if c.maxOpenBytes != "" {
+		maxOpen, err8 = parseBytes("-max-open-bytes", c.maxOpenBytes)
+	}
+	if err := errors.Join(err, err2, err3, err4, err5, err6, err7, err8); err != nil {
 		fmt.Fprintln(stderr, "kolo-pin:", err)
 		return 2
 	}
@@ -144,10 +154,10 @@ func serve(ctx context.Context, c config, stderr io.Writer) int {
 		log.Error("identity failed", "err", err.Error())
 		return 1
 	}
-	var cfg *kolosecure.Config
-	if maxConns > 0 || perIP > 0 {
-		cfg = &kolosecure.Config{Transport: &kolotransport.Config{MaxConns: int(maxConns), MaxConnsPerIP: int(perIP)}}
+	if maxConns == 0 {
+		maxConns = defaultMaxConns
 	}
+	cfg := &kolosecure.Config{Transport: &kolotransport.Config{MaxConns: int(maxConns), MaxConnsPerIP: int(perIP)}}
 	ln, err := kolosecure.Listen(ctx, c.listen, id, cfg)
 	if err != nil {
 		log.Error("listen failed", "err", err.Error())
@@ -186,7 +196,7 @@ func serve(ctx context.Context, c config, stderr io.Writer) int {
 	}
 	done := make(chan error, 1)
 	go func() {
-		done <- pin.Serve(ctx, ln, pin.Options{Dir: c.data, MaxBytes: maxBytes, Owners: owners, MaxOwners: maxOwners, AddTimeout: addTimeout, Logger: log, Metrics: reg})
+		done <- pin.Serve(ctx, ln, pin.Options{Dir: c.data, MaxBytes: maxBytes, Owners: owners, MaxOwners: maxOwners, MaxOpenBytes: maxOpen, AddTimeout: addTimeout, Logger: log, Metrics: reg})
 	}()
 	err = <-done
 	if ctx.Err() == nil {
@@ -290,8 +300,8 @@ var units = []struct {
 	{"KB", 1e3}, {"MB", 1e6}, {"GB", 1e9}, {"TB", 1e12}, {"B", 1},
 }
 
-// parseBytes reads a positive byte count such as 1048576, 500MB or 2TiB.
-func parseBytes(s string) (uint64, error) {
+// parseBytes reads the positive byte count of the flag name, such as 1048576, 500MB or 2TiB.
+func parseBytes(name, s string) (uint64, error) {
 	mult := uint64(1)
 	for _, u := range units {
 		if strings.HasSuffix(s, u.suffix) {
@@ -302,7 +312,7 @@ func parseBytes(s string) (uint64, error) {
 	n, err := strconv.ParseUint(s, 10, 64)
 	hi, v := bits.Mul64(n, mult)
 	if err != nil || hi != 0 || v == 0 {
-		return 0, fmt.Errorf("-max-bytes %q: want a positive number of bytes, such as 500MB", s)
+		return 0, fmt.Errorf("%s %q: want a positive number of bytes, such as 500MB", name, s)
 	}
 	return v, nil
 }

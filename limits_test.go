@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/binary"
 	"errors"
 	"log/slog"
+	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -105,6 +108,94 @@ func TestOwnerLimitBoundsFlood(t *testing.T) {
 	if _, err := Status(ctx, k.id, p.Peer, kl.ID()); err != nil {
 		t.Fatalf("Status of a kept owner = %v", err)
 	}
+}
+
+// A peer that lists its owners keeps no owner limit, however low MaxOwners is.
+func TestListedOwnersNoOwnerLimit(t *testing.T) {
+	checkGoroutines(t)
+	ctx := testCtx(t)
+	var owners []*ownerNode
+	var keys []ed25519.PublicKey
+	for range 3 {
+		o := newOwner(t)
+		owners = append(owners, o)
+		keys = append(keys, o.id.PublicKey())
+	}
+	get := capture(t)
+	p := startPin(t, Options{Owners: keys, MaxOwners: 1})
+	if s := get(); s.disk.maxRecords != 0 {
+		t.Fatalf("limit %d with Owners set, want none", s.disk.maxRecords)
+	}
+	for i, o := range owners {
+		if _, err := Add(ctx, o.id, p.Peer, o.log(t, "x"), o.issue(t, p.Peer, Capability{})); err != nil {
+			t.Fatalf("Add by listed owner %d = %v", i, err)
+		}
+	}
+	if n := metaRecords(t, p); n != 3 {
+		t.Fatalf("%d records, want 3", n)
+	}
+}
+
+// Start-up reads the owner records a chunk at a time: the heap does not grow with their number.
+func TestStartupMemoryFlat(t *testing.T) {
+	checkGoroutines(t)
+	ctx := testCtx(t)
+	p := startPin(t, Options{})
+	alice := newOwner(t)
+	l := alice.log(t, "a", "b")
+	if _, err := Add(ctx, alice.id, p.Peer, l, alice.issue(t, p.Peer, Capability{})); err != nil {
+		t.Fatal(err)
+	}
+	const records = 100_000
+	var samples []uint64
+	p.raw(t, func(db kolostore.Backend) {
+		b := db.NewBatch()
+		for i := range records {
+			key := make([]byte, ed25519.PublicKeySize)
+			binary.BigEndian.PutUint64(key, uint64(i)+1)
+			b.Put(ownerKey(pMeta, key), encodeMeta(0, nil, 1))
+		}
+		if err := b.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		wrap = func(db kolostore.Backend) kolostore.Backend {
+			return scanHook{db, func(k []byte) {
+				if k[0] == pMeta {
+					if n++; n%10_000 == 0 {
+						runtime.GC()
+						var m runtime.MemStats
+						runtime.ReadMemStats(&m)
+						samples = append(samples, m.HeapAlloc)
+					}
+				}
+			}}
+		}
+	})
+	wrap = nil
+	if len(samples) < 10 {
+		t.Fatalf("%d heap samples, want at least 10", len(samples))
+	}
+	lo, hi := slices.Min(samples), slices.Max(samples)
+	if hi-lo > 4<<20 {
+		t.Fatalf("heap grew from %d to %d bytes while start-up read %d records", lo, hi, records)
+	}
+	if st, err := Status(ctx, alice.id, p.Peer, l.ID()); err != nil || st.Entries != 2 {
+		t.Fatalf("Status after the restart = %+v, %v", st, err)
+	}
+}
+
+// scanHook calls seen with the key of every record a Scan reads.
+type scanHook struct {
+	kolostore.Backend
+	seen func(key []byte)
+}
+
+func (h scanHook) Scan(start, end []byte, reverse bool, limit int, fn func(k, v []byte) bool) error {
+	return h.Backend.Scan(start, end, reverse, limit, func(k, v []byte) bool {
+		h.seen(k)
+		return fn(k, v)
+	})
 }
 
 // The default limit is DefaultMaxOwners and an owner's record is bounded by the capability's size.

@@ -34,6 +34,18 @@ const DefaultMaxBytes = 100_000_000_000
 // 8353, so 100,000 records take at most 0.8 GB.
 const DefaultMaxOwners = 100_000
 
+// DefaultMaxOpenBytes is the default Options.MaxOpenBytes: 256 MiB, a quarter of kolo-transport's default MaxMemory.
+const DefaultMaxOpenBytes = 256 << 20
+
+// An open log is counted as openLogBytes plus openEntryBytes per entry, the measured heap rounded up (docs/limits.md).
+const (
+	openLogBytes   = 128
+	openEntryBytes = 256
+)
+
+// loadChunk is how many records start-up reads from the store at a time.
+const loadChunk = 1024
+
 // retryDoublings is how many times the wait before retrying a failed log delete doubles from one sweep interval (1, 2,
 // 4 ... 64 minutes at the one-minute sweep). It only bounds how often a failing delete logs and scans.
 const retryDoublings = 6
@@ -46,7 +58,6 @@ var (
 	clock      = time.Now
 	sweepEvery = time.Minute
 	idleAfter  = time.Minute
-	maxOpen    = 64
 	served     func(*server)
 	gap        func(*hosted) // called in authorize between reading a log's header and offering it
 	acquiring  func(*hosted) // called in add between finding or creating a log and acquiring it
@@ -68,10 +79,14 @@ type Options struct {
 	// Owners lists the owner keys the peer accepts capabilities and revoke notes from. Empty accepts any owner, and
 	// Serve then logs a warning: anyone can fill MaxBytes and MaxOwners.
 	Owners []ed25519.PublicKey
-	// MaxOwners is the most owner records the peer keeps: one per owner key with a capability in use, a held log or a
-	// revoke note, which stays after expiry so a revoked capability is never accepted again. A request that would
-	// add one past it is ErrOwnerLimit; owners already kept are not affected. Default DefaultMaxOwners.
+	// MaxOwners is the most owner records an open peer (empty Owners) keeps: one per owner key with a capability in
+	// use, a held log or a revoke note, which stays after expiry so a revoked capability is never accepted again. A
+	// request that would add one past it is ErrOwnerLimit; owners already kept are not affected. Default
+	// DefaultMaxOwners. It is ignored when Owners is set, since no other key can add a record.
 	MaxOwners uint64
+	// MaxOpenBytes is the memory the open logs may take together, counted as 128 bytes per log and 256 per entry. The
+	// least recently used idle logs are closed past it, never one being pulled into. Default DefaultMaxOpenBytes.
+	MaxOpenBytes uint64
 	// AddTimeout bounds the time one Add may spend pulling a log, entries already stored are kept. Zero means no
 	// limit but the connection's idle timeout and the owner's quota.
 	AddTimeout time.Duration
@@ -113,7 +128,7 @@ type server struct {
 	log       *slog.Logger
 	now       func() time.Time
 	idle      time.Duration
-	maxOpen   int
+	maxOpen   uint64 // bytes
 	m         *metrics
 	gap       func(*hosted)
 	acquiring func(*hosted)
@@ -152,7 +167,7 @@ func Serve(ctx context.Context, node *kolosecure.Listener, opts Options) error {
 		log:       opts.Logger,
 		now:       clock,
 		idle:      idleAfter,
-		maxOpen:   maxOpen,
+		maxOpen:   opts.MaxOpenBytes,
 		m:         newMetrics(),
 		gap:       gap,
 		acquiring: acquiring,
@@ -164,8 +179,14 @@ func Serve(ctx context.Context, node *kolosecure.Listener, opts Options) error {
 	if s.disk.max == 0 {
 		s.disk.max = DefaultMaxBytes
 	}
-	if s.disk.maxRecords == 0 {
+	switch {
+	case len(opts.Owners) > 0:
+		s.disk.maxRecords = 0
+	case s.disk.maxRecords == 0:
 		s.disk.maxRecords = DefaultMaxOwners
+	}
+	if s.maxOpen == 0 {
+		s.maxOpen = DefaultMaxOpenBytes
 	}
 	s.addTimeout = opts.AddTimeout
 	if s.log == nil {
@@ -201,7 +222,7 @@ func Serve(ctx context.Context, node *kolosecure.Listener, opts Options) error {
 	}
 	s.log.Info("serving", "key", hex.EncodeToString(s.key), "addr", node.Addr().String(),
 		"owners", len(s.owners), "used", s.disk.used, "max-bytes", s.disk.max, "owner-records", s.disk.records,
-		"max-owners", s.disk.maxRecords)
+		"max-owners", s.disk.maxRecords, "max-open-bytes", s.maxOpen)
 	if len(s.allow) == 0 {
 		s.log.Warn("open peer: every owner key is accepted, so anyone can fill max-bytes and max-owners; set owners to restrict it",
 			"max-bytes", s.disk.max, "max-owners", s.disk.maxRecords)
@@ -248,113 +269,141 @@ func (s *server) close() {
 	_ = s.disk.db.Close()
 }
 
-// load counts the stored bytes and loads every owner with a capability or a stored log.
-func (s *server) load() error {
+// scan calls fn for every key under prefix, reading loadChunk keys at a time so the memory it uses does not grow with
+// their number; fn may write to the store.
+func (s *server) scan(prefix []byte, fn func(k, v []byte) error) error {
 	type kv struct{ k, v []byte }
-	var metas []kv
-	entries := map[string]uint64{}
-	badKey := false
-	collect := func(p byte, fn func(k, v []byte)) error {
-		return s.disk.db.Scan([]byte{p}, []byte{p + 1}, false, 0, func(k, v []byte) bool {
-			fn(k, v)
+	start, end := prefix, prefixEnd(prefix)
+	for {
+		var chunk []kv
+		err := s.disk.db.Scan(start, end, false, loadChunk, func(k, v []byte) bool {
+			chunk = append(chunk, kv{k, v})
 			return true
 		})
-	}
-	err := errors.Join(
-		collect(pMeta, func(k, v []byte) {
-			metas = append(metas, kv{k, v})
-			s.disk.used += uint64(len(k) + len(v))
-		}),
-		collect(pEntries, func(k, v []byte) {
-			if len(k) != 1+ed25519.PublicKeySize+kololog.LogIDSize {
-				badKey = true
-				return
+		if err != nil {
+			return err
+		}
+		for _, r := range chunk {
+			if err := fn(r.k, r.v); err != nil {
+				return err
 			}
-			n, _ := binary.Uvarint(v)
-			entries[string(k[1:])] = n
+		}
+		if len(chunk) < loadChunk {
+			return nil
+		}
+		start = append(chunk[len(chunk)-1].k, 0)
+	}
+}
+
+// load counts the stored bytes and loads every owner with a capability or a stored log, one record at a time.
+func (s *server) load() error {
+	err := errors.Join(
+		s.scan([]byte{pMeta}, func(k, v []byte) error {
+			s.disk.used += uint64(len(k) + len(v))
+			s.disk.records++
+			return nil
 		}),
-		collect(pUsage, func(_, v []byte) {
+		s.scan([]byte{pUsage}, func(_, v []byte) error {
 			n, _ := binary.Uvarint(v)
 			s.disk.used += n
+			return nil
 		}),
 	)
 	if err != nil {
 		return err
 	}
-	if badKey {
-		return fmt.Errorf("pin: %w: entry count key", kolostore.ErrCorrupt)
-	}
-	s.disk.records = uint64(len(metas))
-	for _, m := range metas {
-		if len(m.k) != 1+ed25519.PublicKeySize {
+	err = s.scan([]byte{pMeta}, func(k, v []byte) error {
+		if len(k) != 1+ed25519.PublicKeySize {
 			return fmt.Errorf("pin: %w: owner key", kolostore.ErrCorrupt)
 		}
-		key := m.k[1:]
-		_, capb, _, err := decodeMeta(m.v)
-		if err != nil {
-			return err
-		}
-		if len(capb) == 0 {
-			held := false
-			if err := s.disk.db.Scan(ownerKey(pData, key), prefixEnd(ownerKey(pData, key)), false, 1, func(_, _ []byte) bool {
-				held = true
-				return false
-			}); err != nil {
-				return err
-			}
-			if !held {
-				continue
-			}
-		}
-		o, err := s.owner(key)
-		if err != nil {
-			return err
-		}
-		if len(s.allow) > 0 && !s.allow[string(key)] && o.capb != nil {
-			// The operator took the owner off the list: its capability goes, so its logs go below.
-			o.cap, o.capb = Capability{}, nil
-			o.sp.setQuota(0)
-			if err := o.saveMeta(); err != nil {
-				return err
-			}
-			s.log.Info("dropped", "owner", hex.EncodeToString(key), "reason", "owner not accepted")
-		}
-		ids, err := o.store.List()
-		if err != nil {
-			return err
-		}
-		for _, id := range ids {
-			// A crash can leave a log the capability in use no longer covers, or one whose delete failed.
-			if o.capb == nil || !o.cap.Covers(id) {
-				err := o.store.Delete(id)
-				if err == nil {
-					s.log.Info("dropped", "owner", hex.EncodeToString(key), "log", hex.EncodeToString(id[:]), "reason", "not covered")
-					continue
-				}
-				// Held but not served, as after a failed delete while serving, until the sweep deletes it.
-				h := &hosted{o: o, id: id}
-				h.failed(s, err)
-				h.entries.Store(entries[string(key)+string(id[:])])
-				o.logs[id] = h
-				continue
-			}
-			h := &hosted{o: o, id: id}
-			h.entries.Store(entries[string(key)+string(id[:])])
-			o.logs[id] = h
-		}
-		if o.capb == nil && len(o.logs) == 0 {
-			s.forget(o)
-		}
+		return s.loadOwner(k[1:], v)
+	})
+	if err != nil {
+		return err
 	}
 	// Entry counts of logs no longer held, left by a crash or by the deletes above.
-	for k := range entries {
-		var logID kololog.LogID
-		copy(logID[:], k[ed25519.PublicKeySize:])
-		if o := s.lookup([]byte(k[:ed25519.PublicKeySize])); o == nil || o.logs[logID] == nil {
-			if err := s.disk.db.Delete(append([]byte{pEntries}, k...)); err != nil {
-				return err
-			}
+	return s.scan([]byte{pEntries}, func(k, _ []byte) error {
+		if len(k) != 1+ed25519.PublicKeySize+kololog.LogIDSize {
+			return fmt.Errorf("pin: %w: entry count key", kolostore.ErrCorrupt)
 		}
+		var logID kololog.LogID
+		copy(logID[:], k[1+ed25519.PublicKeySize:])
+		if o := s.lookup(k[1 : 1+ed25519.PublicKeySize]); o == nil || o.logs[logID] == nil {
+			return s.disk.db.Delete(k)
+		}
+		return nil
+	})
+}
+
+// loadOwner loads the owner key with its stored state meta, if it has a capability or a stored log.
+func (s *server) loadOwner(key, meta []byte) error {
+	_, capb, _, err := decodeMeta(meta)
+	if err != nil {
+		return err
+	}
+	if len(capb) == 0 {
+		held := false
+		if err := s.disk.db.Scan(ownerKey(pData, key), prefixEnd(ownerKey(pData, key)), false, 1, func(_, _ []byte) bool {
+			held = true
+			return false
+		}); err != nil {
+			return err
+		}
+		if !held {
+			return nil
+		}
+	}
+	o, err := s.owner(key)
+	if err != nil {
+		return err
+	}
+	if len(s.allow) > 0 && !s.allow[string(key)] && o.capb != nil {
+		// The operator took the owner off the list: its capability goes, so its logs go below.
+		o.cap, o.capb = Capability{}, nil
+		o.sp.setQuota(0)
+		if err := o.saveMeta(); err != nil {
+			return err
+		}
+		s.log.Info("dropped", "owner", hex.EncodeToString(key), "reason", "owner not accepted")
+	}
+	entries := map[kololog.LogID]uint64{}
+	err = s.scan(ownerKey(pEntries, key), func(k, v []byte) error {
+		if len(k) != 1+ed25519.PublicKeySize+kololog.LogIDSize {
+			return fmt.Errorf("pin: %w: entry count key", kolostore.ErrCorrupt)
+		}
+		var id kololog.LogID
+		copy(id[:], k[1+ed25519.PublicKeySize:])
+		entries[id], _ = binary.Uvarint(v)
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	ids, err := o.store.List()
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		// A crash can leave a log the capability in use no longer covers, or one whose delete failed.
+		if o.capb == nil || !o.cap.Covers(id) {
+			err := o.store.Delete(id)
+			if err == nil {
+				s.log.Info("dropped", "owner", hex.EncodeToString(key), "log", hex.EncodeToString(id[:]), "reason", "not covered")
+				continue
+			}
+			// Held but not served, as after a failed delete while serving, until the sweep deletes it.
+			h := &hosted{o: o, id: id}
+			h.failed(s, err)
+			h.entries.Store(entries[id])
+			o.logs[id] = h
+			continue
+		}
+		h := &hosted{o: o, id: id}
+		h.entries.Store(entries[id])
+		o.logs[id] = h
+	}
+	if o.capb == nil && len(o.logs) == 0 {
+		s.forget(o)
 	}
 	return nil
 }
@@ -1003,14 +1052,26 @@ func (h *hosted) closeRep() {
 	s.openMu.Unlock()
 }
 
-// opened records h as open and closes the least recently used other replicas past s.maxOpen; h.mu is held.
+func openCost(entries uint64) uint64 { return openLogBytes + entries*openEntryBytes }
+
+// opened records h as open and trims; h.mu is held.
 func (s *server) opened(h *hosted) {
 	h.last.Store(time.Now().UnixNano())
 	s.openMu.Lock()
 	s.open[h] = struct{}{}
-	excess := len(s.open) - s.maxOpen
+	s.openMu.Unlock()
+	s.trim(h)
+}
+
+// trim closes the least recently used idle replicas other than h until the open ones fit in s.maxOpen; h.mu is held.
+func (s *server) trim(h *hosted) {
+	s.openMu.Lock()
+	var used uint64
+	for o := range s.open {
+		used += openCost(o.entries.Load())
+	}
 	var others []*hosted
-	if excess > 0 {
+	if used > s.maxOpen {
 		for o := range s.open {
 			if o != h {
 				others = append(others, o)
@@ -1020,14 +1081,14 @@ func (s *server) opened(h *hosted) {
 	s.openMu.Unlock()
 	slices.SortFunc(others, func(a, b *hosted) int { return cmp.Compare(a.last.Load(), b.last.Load()) })
 	for _, o := range others {
-		if excess <= 0 {
+		if used <= s.maxOpen {
 			break
 		}
 		// TryLock: another goroutine holding o.mu may be opening a replica itself.
 		if o.mu.TryLock() {
 			if o.pulls == 0 && o.rep != nil {
+				used -= openCost(o.entries.Load())
 				o.closeRep()
-				excess--
 			}
 			o.mu.Unlock()
 		}
@@ -1063,6 +1124,7 @@ func (h *hosted) release(n uint64) {
 	h.entries.Store(n)
 	h.known.Store(true)
 	h.last.Store(time.Now().UnixNano())
+	h.o.s.trim(h)
 }
 
 func (h *hosted) idle(before time.Time) {

@@ -20,8 +20,9 @@ must be private (mode 0700); it is created with that mode when missing.
 | `-listen` | `KOLO_PIN_LISTEN` | `127.0.0.1:7450` | UDP address for kolo-secure connections; `0.0.0.0:7450` on a server |
 | `-max-bytes` | `KOLO_PIN_MAX_BYTES` | `100GB` | most bytes stored for all owners together; `B`, `KB`, `MB`, `GB`, `TB`, `KiB`, `MiB`, `GiB`, `TiB` |
 | `-owners` | `KOLO_PIN_OWNERS` | empty | comma-separated hex owner keys to accept; empty accepts any owner and logs a warning at start (see below). An owner taken off the list loses its capability and logs at the next start; its revoke notes are still accepted |
-| `-max-owners` | `KOLO_PIN_MAX_OWNERS` | `100000` | most owner records kept, one per owner key ever seen; a new owner past it is refused (`ErrOwnerLimit`) |
-| `-max-conns` | `KOLO_PIN_MAX_CONNS` | `100` | most connections at once, handshaking or open; from 1 to 10000 |
+| `-max-owners` | `KOLO_PIN_MAX_OWNERS` | `100000` | most owner records an open peer keeps, one per owner key ever seen; a new owner past it is refused (`ErrOwnerLimit`). Ignored with `-owners` |
+| `-max-open-bytes` | `KOLO_PIN_MAX_OPEN_BYTES` | `256MiB` | memory the open logs may take, counted as 128 bytes per log and 256 per entry; the least recently used idle logs are closed past it |
+| `-max-conns` | `KOLO_PIN_MAX_CONNS` | `2016` | most connections at once, handshaking or open; at most what kolo-transport's default memory allows, which is 2016 |
 | `-max-conns-per-ip` | `KOLO_PIN_MAX_CONNS_PER_IP` | `4` | most connections from one source address, at most `-max-conns`; raise it for owners behind one NAT |
 | `-add-timeout` | `KOLO_PIN_ADD_TIMEOUT` | none | most time one add may spend, such as `10m`; past it the add is refused as busy and what was stored is kept |
 | `-health` | `KOLO_PIN_HEALTH` | `127.0.0.1:7451` | TCP address of `GET /healthz`, or `off` |
@@ -45,7 +46,7 @@ peer you use alone or inside a network you trust. At start it logs
 people, list their keys in `-owners`.
 
 Logs are slog events: `serving` (key, address, bytes used, limit, owner
-records),
+records, open-log budget),
 `pinned`, `refused` (with the reason), `done` (remove, revoke), `dropped`
 (expired, revoked, not covered, owner not accepted; the owner's `kept` count
 is the logs whose delete failed), `dropped after retry`, `stopped`, and the
@@ -77,7 +78,7 @@ from another machine, put it behind a reverse proxy with authentication
 | `kolo_pin_disk_free_bytes` | gauge | | free bytes on the data directory's filesystem (Linux, macOS, Windows) |
 | `kolo_pin_owners` | gauge | | owners with a capability in use or a held log |
 | `kolo_pin_owner_records` | gauge | | owner records stored, including owners with nothing held |
-| `kolo_pin_owner_records_max` | gauge | | `-max-owners` |
+| `kolo_pin_owner_records_max` | gauge | | `-max-owners`; 0 with `-owners` |
 | `kolo_pin_logs` | gauge | | held logs, including logs whose delete failed |
 | `kolo_pin_entries` | gauge | | entries of all held logs, including logs whose delete failed |
 | `kolo_pin_requests_total` | counter | `op`: `add`, `remove`, `status`, `revoke`, `sync_pull` | requests answered; `sync_pull` counts the kolo-sync streams other peers open on a hosted log (a new reader opens two: header, then pull; `FetchHead` and `Fetch` open one each) |

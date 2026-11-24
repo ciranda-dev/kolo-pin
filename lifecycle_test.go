@@ -236,14 +236,12 @@ func TestRevokeFutureRefused(t *testing.T) {
 	}
 }
 
-// At most maxOpen replicas stay open: reading more closes the least recently used ones.
+// Open replicas stay within MaxOpenBytes: reading more closes the least recently used ones.
 func TestOpenReplicasCapped(t *testing.T) {
 	checkGoroutines(t)
 	ctx := testCtx(t)
-	maxOpen = 2
-	t.Cleanup(func() { maxOpen = 64 })
 	get := capture(t)
-	p := startPin(t, Options{})
+	p := startPin(t, Options{MaxOpenBytes: 2 * openCost(1)})
 	alice := newOwner(t)
 	c := alice.issue(t, p.Peer, Capability{})
 	var logs []*kolostore.Log
@@ -270,13 +268,101 @@ func TestOpenReplicasCapped(t *testing.T) {
 	}
 }
 
+// Many small logs stay open together under the byte budget, and one large log alone past it closes the idle others.
+func TestOpenLogsByBytes(t *testing.T) {
+	checkGoroutines(t)
+	ctx := testCtx(t)
+	get := capture(t)
+	p := startPin(t, Options{MaxOpenBytes: openCost(20)})
+	s := get()
+	alice := newOwner(t)
+	c := alice.issue(t, p.Peer, Capability{})
+	open := func() int {
+		s.openMu.Lock()
+		defer s.openMu.Unlock()
+		return len(s.open)
+	}
+	for i := range 5 {
+		if _, err := Add(ctx, alice.id, p.Peer, alice.log(t, fmt.Sprint("log ", i)), c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := open(); n != 5 {
+		t.Fatalf("%d small logs open, want 5", n)
+	}
+	var values []string
+	for i := range 40 {
+		values = append(values, fmt.Sprint("entry ", i))
+	}
+	big := alice.log(t, values...)
+	if _, err := Add(ctx, alice.id, p.Peer, big, c); err != nil {
+		t.Fatal(err)
+	}
+	if n := open(); n != 1 {
+		t.Fatalf("%d logs open after one past the budget, want only that one", n)
+	}
+}
+
+// A log that grows past the budget by a pull closes the idle ones, though it was already open.
+func TestGrowthClosesIdleLogs(t *testing.T) {
+	checkGoroutines(t)
+	ctx := testCtx(t)
+	get := capture(t)
+	p := startPin(t, Options{MaxOpenBytes: openCost(20)})
+	s := get()
+	alice := newOwner(t)
+	c := alice.issue(t, p.Peer, Capability{})
+	small, grown := alice.log(t, "a"), alice.log(t, "b")
+	for _, l := range []*kolostore.Log{small, grown} {
+		if _, err := Add(ctx, alice.id, p.Peer, l, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := range 40 {
+		if _, err := grown.Append(fmt.Appendf(nil, "entry %d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := Add(ctx, alice.id, p.Peer, grown, c); err != nil {
+		t.Fatal(err)
+	}
+	s.openMu.Lock()
+	n := len(s.open)
+	s.openMu.Unlock()
+	if n != 1 {
+		t.Fatalf("%d logs open after one grew past the budget, want 1", n)
+	}
+}
+
+// The default budget holds far more than 64 small logs open at once.
+func TestManySmallLogsOpen(t *testing.T) {
+	checkGoroutines(t)
+	ctx := testCtx(t)
+	get := capture(t)
+	p := startPin(t, Options{})
+	s := get()
+	alice := newOwner(t)
+	c := alice.issue(t, p.Peer, Capability{})
+	for i := range 100 {
+		if _, err := Add(ctx, alice.id, p.Peer, alice.log(t, fmt.Sprint("log ", i)), c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.openMu.Lock()
+	n := len(s.open)
+	s.openMu.Unlock()
+	if n != 100 {
+		t.Fatalf("%d logs open, want 100", n)
+	}
+}
+
 // The idle sweep and the open cap never close a replica while a pull fills it.
 func TestRunningPullNotClosed(t *testing.T) {
 	checkGoroutines(t)
 	ctx := testCtx(t)
-	idleAfter, maxOpen = time.Nanosecond, 1
-	t.Cleanup(func() { idleAfter, maxOpen = time.Minute, 64 })
-	p := startPin(t, Options{})
+	idleAfter = time.Nanosecond
+	t.Cleanup(func() { idleAfter = time.Minute })
+	p := startPin(t, Options{MaxOpenBytes: 1})
 	alice := newOwner(t)
 	var values []string
 	for i := range 16 {
