@@ -136,7 +136,7 @@ kolo-pin run -data /var/lib/kolo-pin -listen 0.0.0.0:7450 -max-bytes 100GB
 kolo-pin id -data /var/lib/kolo-pin
 ```
 
-`id` prints the pinning peer's public key in hex, which owners put in their capabilities. The key is created in the data directory on first use (`identity.key`, mode 0600) and kept across restarts; the data directory must be private (mode 0700). Flags also come from `KOLO_PIN_*` environment variables, and a flag wins. `/healthz` and a Prometheus `/metrics` listen on loopback by default. Open UDP port 7450 in the firewall. Details and the flag table are in [docs/operations.md](docs/operations.md).
+`id` prints the pinning peer's public key in hex, which owners put in their capabilities. The key is created in the data directory on first use (`identity.key`, the seed unencrypted, mode 0600) and kept across restarts; the data directory must be private (mode 0700). Flags also come from `KOLO_PIN_*` environment variables, and a flag wins. `/healthz` and a Prometheus `/metrics` listen on loopback by default. Open UDP port 7450 in the firewall. Details and the flag table are in [docs/operations.md](docs/operations.md).
 
 ## API
 
