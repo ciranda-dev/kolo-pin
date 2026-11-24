@@ -4,14 +4,14 @@ go 1.26.0
 
 require (
 	github.com/ciranda-dev/kolo-codec v0.1.0
-	github.com/ciranda-dev/kolo-dht v0.1.0
+	github.com/ciranda-dev/kolo-dht v0.1.1
 	github.com/ciranda-dev/kolo-id v0.1.0
-	github.com/ciranda-dev/kolo-kv v0.1.0
+	github.com/ciranda-dev/kolo-kv v0.1.1
 	github.com/ciranda-dev/kolo-log v0.1.0
-	github.com/ciranda-dev/kolo-secure v0.1.0
+	github.com/ciranda-dev/kolo-secure v0.1.1
 	github.com/ciranda-dev/kolo-store v0.1.0
-	github.com/ciranda-dev/kolo-sync v0.1.0
-	github.com/ciranda-dev/kolo-transport v0.1.0
+	github.com/ciranda-dev/kolo-sync v0.1.1
+	github.com/ciranda-dev/kolo-transport v0.1.1
 	github.com/prometheus/client_golang v1.16.0
 	github.com/prometheus/client_model v0.3.0
 	github.com/prometheus/common v0.42.0
