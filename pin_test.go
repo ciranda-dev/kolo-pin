@@ -539,3 +539,76 @@ func TestServeArguments(t *testing.T) {
 		t.Fatalf("Remove to an IPv6 address = %v, want ErrInvalidArgument", err)
 	}
 }
+
+func TestAddRefusesNonOwner(t *testing.T) {
+	checkGoroutines(t)
+	ctx := testCtx(t)
+	p := startPin(t, Options{})
+	alice, mallory := newOwner(t), newOwner(t)
+	l := alice.log(t, "a0", "a1")
+	capb := alice.issue(t, p.Peer, Capability{})
+	if _, err := Add(ctx, mallory.id, p.Peer, l, capb); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("Add by a key that is not the owner = %v, want ErrUnauthorized", err)
+	}
+	if _, err := Status(ctx, alice.id, p.Peer, l.ID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Status after the refused add = %v, want ErrNotFound", err)
+	}
+	if used, _ := p.usage(t, alice.id.PublicKey()); used != 0 {
+		t.Fatalf("%d bytes stored for a refused add", used)
+	}
+	if in, err := Add(ctx, alice.id, p.Peer, l, capb); err != nil || in.Entries != 2 {
+		t.Fatalf("Add by the owner = %+v, %v", in, err)
+	}
+}
+
+func TestAddNonOwnerLearnsNothingOfCapabilityState(t *testing.T) {
+	checkGoroutines(t)
+	ctx := testCtx(t)
+	p := startPin(t, Options{})
+	alice, mallory := newOwner(t), newOwner(t)
+	l := alice.log(t, "x")
+	now := time.Now()
+	expired := alice.issue(t, p.Peer, Capability{Issued: now.Add(-2 * time.Hour), Expires: now.Add(-time.Hour)})
+	old := alice.issue(t, p.Peer, Capability{Issued: now.Add(-time.Minute)})
+	newer := alice.issue(t, p.Peer, Capability{Issued: now})
+	if _, err := Add(ctx, alice.id, p.Peer, l, newer); err != nil {
+		t.Fatal(err)
+	}
+	note, err := IssueRevocation(alice.id, p.ID, now.Add(-30*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Revoke(ctx, alice.id, p.Peer, note); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name  string
+		capb  []byte
+		owner error
+	}{
+		{"expired", expired, ErrExpired},
+		{"revoked", old, ErrRevoked},
+	} {
+		if _, err := Add(ctx, mallory.id, p.Peer, l, c.capb); !errors.Is(err, ErrUnauthorized) {
+			t.Fatalf("%s: Add by a key that is not the owner = %v, want ErrUnauthorized", c.name, err)
+		}
+		if _, err := Add(ctx, alice.id, p.Peer, l, c.capb); !errors.Is(err, c.owner) {
+			t.Fatalf("%s: Add by the owner = %v, want %v", c.name, err, c.owner)
+		}
+	}
+}
+
+func TestAddReplayFromThirdKeyRefused(t *testing.T) {
+	checkGoroutines(t)
+	ctx := testCtx(t)
+	p := startPin(t, Options{})
+	alice, mallory := newOwner(t), newOwner(t)
+	l := alice.log(t, "x")
+	capb := alice.issue(t, p.Peer, Capability{})
+	if err := addOffering(t, ctx, p.Peer, alice, l, capb, kolosync.Ciphertext); err != nil {
+		t.Fatalf("Add by the owner = %v", err)
+	}
+	if err := addOffering(t, ctx, p.Peer, mallory, l, capb, kolosync.Ciphertext); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("replay of the same request from another key = %v, want ErrUnauthorized", err)
+	}
+}

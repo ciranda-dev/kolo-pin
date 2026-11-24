@@ -7,8 +7,8 @@ var (
 	ErrInvalidArgument = errors.New("pin: invalid argument")
 	// ErrInvalidCapability means a capability or revoke note that is malformed or whose signature does not verify.
 	ErrInvalidCapability = errors.New("pin: invalid capability")
-	// ErrUnauthorized means the pinning peer refused the capability: another peer or owner, a log it does not
-	// cover, an owner the peer does not accept, a bad signature, or an issue time in the future.
+	// ErrUnauthorized means the pinning peer refused the capability: a requester that is not its owner, another
+	// peer or owner, a log it does not cover, an owner the peer does not accept, a bad signature, or an issue time in the future.
 	ErrUnauthorized = errors.New("pin: not authorized")
 	// ErrExpired means the capability has expired.
 	ErrExpired = errors.New("pin: capability expired")

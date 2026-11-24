@@ -33,7 +33,7 @@ type Info struct {
 var dialTimeout = 10 * time.Second
 
 // Add asks the pinning peer to keep log under capability, and serves it the log's ciphertext until it has
-// pulled and verified it. Call it again after new entries or deletes. id only opens the connection.
+// pulled and verified it. Call it again after new entries or deletes. id must be the capability's owner.
 func Add(ctx context.Context, id *koloid.Identity, peer Peer, log kolosync.Source, capability []byte) (Info, error) {
 	if log == nil || len(capability) == 0 || len(capability) > MaxCapabilitySize {
 		return Info{}, ErrInvalidArgument
