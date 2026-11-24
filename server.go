@@ -90,11 +90,12 @@ type Options struct {
 	// MaxOpenBytes is the memory the open logs may take together, counted as 128 bytes per log and 256 per entry. The
 	// least recently used idle logs are closed past it, never one being pulled into. Default DefaultMaxOpenBytes.
 	MaxOpenBytes uint64
-	// PeerBytesPerSecond and PeerBurstBytes are the byte budget of each peer key pulling from this peer, as a token
-	// bucket over all its connections; past it a pull is busy. Zero is kolo-sync's DefaultPeerBytesPerSecond (32 MiB/s)
-	// and DefaultPeerBurstBytes (256 MiB). A negative value or a burst below 2 * kolosync.MaxMessageSize is ErrInvalidArgument.
+	// PeerBytesPerSecond is the rate at which each peer key pulling from this peer earns bytes, as a token bucket over all
+	// its connections; past the bucket a pull is busy. Zero is kolo-sync's DefaultPeerBytesPerSecond (32 MiB/s); negative is ErrInvalidArgument.
 	PeerBytesPerSecond int64
-	PeerBurstBytes     int64
+	// PeerBurstBytes is the size of that bucket, the most a peer key may pull at once. Zero is kolo-sync's
+	// DefaultPeerBurstBytes (256 MiB); negative or below 2 * kolosync.MaxMessageSize is ErrInvalidArgument.
+	PeerBurstBytes int64
 	// AddTimeout bounds the time one Add may spend pulling a log, entries already stored are kept. Zero means no
 	// limit but the connection's idle timeout and the owner's quota.
 	AddTimeout time.Duration
