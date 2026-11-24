@@ -118,7 +118,9 @@ Server:
   `DefaultMaxBytes`, 100 GB), `Owners` (accepted owner keys; empty accepts
   any and logs a warning at start), `MaxOwners` (owner records an open peer keeps, default
   `DefaultMaxOwners`, ignored with `Owners`), `MaxOpenBytes` (memory of the
-  open logs, default `DefaultMaxOpenBytes`), `AddTimeout` (the most time one `Add` pulls, default
+  open logs, default `DefaultMaxOpenBytes`), `PeerBytesPerSecond` and `PeerBurstBytes` (the byte budget of each
+  peer key pulling from the peer, a token bucket over its connections, default kolo-sync's 32 MiB/s and 256 MiB; past it
+  a pull is `kolosync.ErrBusy`), `AddTimeout` (the most time one `Add` pulls, default
   none), `Logger` (nil discards) and `Metrics` (a `prometheus.Registerer`
   that gets the `kolo_pin_*` metrics while `Serve` runs, or nil). Every
   connection is served by kolo-sync, so any peer pulls a hosted log, or

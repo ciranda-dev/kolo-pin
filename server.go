@@ -90,6 +90,11 @@ type Options struct {
 	// MaxOpenBytes is the memory the open logs may take together, counted as 128 bytes per log and 256 per entry. The
 	// least recently used idle logs are closed past it, never one being pulled into. Default DefaultMaxOpenBytes.
 	MaxOpenBytes uint64
+	// PeerBytesPerSecond and PeerBurstBytes are the byte budget of each peer key pulling from this peer, as a token
+	// bucket over all its connections; past it a pull is busy. Zero is kolo-sync's DefaultPeerBytesPerSecond (32 MiB/s)
+	// and DefaultPeerBurstBytes (256 MiB). A negative value or a burst below 2 * kolosync.MaxMessageSize is ErrInvalidArgument.
+	PeerBytesPerSecond int64
+	PeerBurstBytes     int64
 	// AddTimeout bounds the time one Add may spend pulling a log, entries already stored are kept. Zero means no
 	// limit but the connection's idle timeout and the owner's quota.
 	AddTimeout time.Duration
@@ -205,7 +210,11 @@ func Serve(ctx context.Context, node *kolosecure.Listener, opts Options) error {
 	for _, k := range opts.Owners {
 		s.allow[string(k)] = true
 	}
-	s.sync = kolosync.NewServer(s.authorize)
+	s.sync, err = kolosync.NewServerWith(s.authorize, &kolosync.ServerOptions{PeerBytesPerSecond: opts.PeerBytesPerSecond, PeerBurstBytes: opts.PeerBurstBytes})
+	if err != nil {
+		s.close()
+		return fmt.Errorf("%w: peer byte budget: %w", ErrInvalidArgument, err)
+	}
 	if err := s.load(); err != nil {
 		s.close()
 		return err

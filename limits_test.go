@@ -16,7 +16,9 @@ import (
 	"time"
 
 	kololog "github.com/ciranda-dev/kolo-log"
+	kolosecure "github.com/ciranda-dev/kolo-secure"
 	kolostore "github.com/ciranda-dev/kolo-store"
+	kolosync "github.com/ciranda-dev/kolo-sync"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -469,5 +471,45 @@ func TestAddressesOnlyAtDebug(t *testing.T) {
 		if !pinned {
 			t.Errorf("level %v: no pinned event with the peer key", c.min)
 		}
+	}
+}
+
+// Options.PeerBytesPerSecond and PeerBurstBytes reach the kolo-sync server: a device pulling more than the burst is
+// busy, the defaults serve the same log, and a burst below the kolo-sync minimum is ErrInvalidArgument.
+func TestPeerByteBudget(t *testing.T) {
+	checkGoroutines(t)
+	ctx := testCtx(t)
+	alice := newOwner(t)
+	l := alice.log(t)
+	big := bytes.Repeat([]byte{1}, 1<<20)
+	for range 12 {
+		if _, err := l.Append(big); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tight := startPin(t, Options{PeerBytesPerSecond: 1, PeerBurstBytes: 2 * kolosync.MaxMessageSize})
+	open := startPin(t, Options{})
+	for _, p := range []*pinPeer{tight, open} {
+		if _, err := Add(ctx, alice.id, p.Peer, l, alice.issue(t, p.Peer, Capability{})); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if r, err := pullFrom(t, ctx, tight.Peer, alice.id.PublicKey(), l.ID()); !errors.Is(err, kolosync.ErrBusy) || r.Len() >= l.Len() {
+		t.Fatalf("pull past the burst = %v, want kolosync.ErrBusy before the end", err)
+	}
+	r, err := pullFrom(t, ctx, open.Peer, alice.id.PublicKey(), l.ID())
+	if err != nil {
+		t.Fatalf("pull with the default budget = %v", err)
+	}
+	mustEqualEntries(t, l, r, l.Len())
+
+	id := generate(t)
+	ln, err := kolosecure.Listen(ctx, "127.0.0.1:0", id, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	if err := Serve(ctx, ln, Options{Dir: privateDir(t), Identity: id, PeerBurstBytes: 1}); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("Serve with a burst of 1 = %v, want ErrInvalidArgument", err)
 	}
 }

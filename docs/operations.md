@@ -22,6 +22,8 @@ must be private (mode 0700); it is created with that mode when missing.
 | `-owners` | `KOLO_PIN_OWNERS` | empty | comma-separated hex owner keys to accept; empty accepts any owner and logs a warning at start (see below). An owner taken off the list loses its capability and logs at the next start; its revoke notes are still accepted |
 | `-max-owners` | `KOLO_PIN_MAX_OWNERS` | `100000` | most owner records an open peer keeps, one per owner key ever seen; a new owner past it is refused (`ErrOwnerLimit`). Ignored with `-owners` |
 | `-max-open-bytes` | `KOLO_PIN_MAX_OPEN_BYTES` | `256MiB` | memory the open logs may take, counted as 128 bytes per log and 256 per entry; the least recently used idle logs are closed past it |
+| `-peer-bytes-per-second` | `KOLO_PIN_PEER_BYTES_PER_SECOND` | `32MiB` | bytes each peer key may pull per second over all its connections; past its budget a pull is answered busy |
+| `-peer-burst-bytes` | `KOLO_PIN_PEER_BURST_BYTES` | `256MiB` | most bytes a peer key may pull at once, at least `8MiB` |
 | `-max-conns` | `KOLO_PIN_MAX_CONNS` | `2016` | most connections at once, handshaking or open; at most what kolo-transport's default memory allows, which is 2016 |
 | `-max-conns-per-ip` | `KOLO_PIN_MAX_CONNS_PER_IP` | `4` | most connections from one source address, at most `-max-conns`; raise it for owners behind one NAT |
 | `-add-timeout` | `KOLO_PIN_ADD_TIMEOUT` | none | most time one add may spend, such as `10m`; past it the add is refused as busy and what was stored is kept |
